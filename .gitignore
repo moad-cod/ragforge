@@ -29,7 +29,7 @@ Thumbs.db
 *.docx
 *.txt
 uploads/
-
+documents/
 # Docker
 postgres_data/
 qdrant_data/
