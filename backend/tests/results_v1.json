@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "retrieval_metrics": {
+    "MRR": 0.0,
+    "Recall@5": 0.0,
+    "Recall@20": 0.0,
+    "Precision@5": 0.0
+  },
+  "generation_metrics": {
+    "faithfulness": 0.0,
+    "answer_relevancy": 0.0,
+    "context_precision": 0.0,
+    "context_recall": 0.0
+  }
+}

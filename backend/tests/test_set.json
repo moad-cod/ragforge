@@ -1,0 +1,32 @@
+[
+  {
+    "question": "What is the purpose of this methodology note?",
+    "ground_truth": "To summarise the methodology used to calculate the number of people potentially exposed to flooding in Somalia for the 2024 HNRP.",
+    "relevant_chunk": "This technical note summarises the methodology used to calculate the number of people potentially exposed to flooding in Somalia"
+  },
+  {
+    "question": "What data sources were used in the flood exposure analysis?",
+    "ground_truth": "Daily FloodScan data from 1998 to 2022 and WorldPop 2020 UN Adjusted raster data.",
+    "relevant_chunk": "Daily FloodScan (1998-2022) & WorldPop (2020 UN Adjusted) raster data was analysed"
+  },
+  {
+    "question": "What flood fraction threshold was used?",
+    "ground_truth": "A 20 percent flood fraction threshold.",
+    "relevant_chunk": "Composites reclassified to binary using a 20 percent flood fraction threshold"
+  },
+  {
+    "question": "Which seasons were analyzed for flood exposure?",
+    "ground_truth": "March-April-May (MAM) and October-November-December (OND) seasons.",
+    "relevant_chunk": "Daily flood fraction Standard Flood Exposure Depiction (SFED) was aggregated to yearly seasonal maximum fraction composites for both the MAM and OND seasons"
+  },
+  {
+    "question": "What percentile range was used for MAM 2024 predictions?",
+    "ground_truth": "The 50th to 95th percentile levels.",
+    "relevant_chunk": "the range of population exposed was based on the 50th-95th percentile levels"
+  },
+  {
+    "question": "Who should be contacted for questions about this methodology?",
+    "ground_truth": "Leonardo Milano, Team Lead for Data Science at the OCHA Centre for Humanitarian Data.",
+    "relevant_chunk": "Contact the OCHA Centre for Humanitarian Data via Leonardo Milano, Team Lead for Data Science"
+  }
+]
