@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION: str = "ragforge_docs"
     GROQ_API_KEY: str
     GEMINI_API_KEY: str
+    QDRANT_API_KEY: str = ""
 
     class Config:
         env_file = ".env"
