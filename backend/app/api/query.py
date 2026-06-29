@@ -1,6 +1,11 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from typing import Literal
+from app.core.auth import get_current_user
+from app.core.db import get_db
+from app.models.tables import Project
 from app.services.embedder import embed_query
 from app.services.retriever import search
 from app.core.config import settings
@@ -29,23 +34,34 @@ def get_llm_client(provider: str) -> tuple[OpenAI, str]:
 class QueryRequest(BaseModel):
     question: str
     project_id: str
-    collection: str
     provider: Literal["gemini", "groq"] = "gemini"
-    model: str | None = None        # use null, not ""
-    document_id: str | None = None  # use null, not "string"
+    model: str | None = None
+    document_id: str | None = None
 
 
 @router.post("/query")
-def query(request: QueryRequest):
-    # ✅ same sanitization as ingest
-    collection = request.collection.strip().lower().replace(" ", "_")
+async def query(
+    request: QueryRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Project).where(
+            Project.id == request.project_id,
+            Project.user_id == user["user_id"],
+        )
+    )
+    project = result.scalar_one_or_none()
+
+    if not project:
+        raise HTTPException(403, "Project not found or access denied")
 
     query_embedding = embed_query(request.question)
 
     contexts = search(
         embedding=query_embedding,
         project_id=request.project_id,
-        collection=collection,
+        collection=project.collection,
         document_id=request.document_id,
     )
 
@@ -53,7 +69,7 @@ def query(request: QueryRequest):
         return {
             "question": request.question,
             "project_id": request.project_id,
-            "collection": collection,
+            "collection": project.collection,
             "answer": "No documents found for this project.",
             "retrieved_chunks": [],
         }
@@ -68,7 +84,6 @@ Context:
 Question: {request.question}"""
 
     client, default_model = get_llm_client(request.provider)
-    # ✅ handles both None and empty string ""
     model = (request.model or "").strip() or default_model
 
     response = client.chat.completions.create(
@@ -80,7 +95,7 @@ Question: {request.question}"""
     return {
         "question": request.question,
         "project_id": request.project_id,
-        "collection": collection,
+        "collection": project.collection,
         "provider": request.provider,
         "model": model,
         "answer": response.choices[0].message.content,

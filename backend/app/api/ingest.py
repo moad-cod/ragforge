@@ -1,5 +1,10 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.core.auth import get_current_user
+from app.core.db import get_db
+from app.models.tables import Project
 from app.services.parser import parse_document, parse_url, parse_gdrive
 from app.services.embedder import embed_texts
 from app.services.indexer import index_chunks
@@ -26,15 +31,23 @@ SUPPORTED_MIME_TYPES = {
 }
 
 
-# ── Shared indexing logic ─────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+async def _get_project(project_id: str, user_id: str, db: AsyncSession) -> Project:
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == user_id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(403, "Project not found or access denied")
+    return project
 
 def _build_chunks(raw_text: list[str], chunker_name: str) -> list[str]:
     chunker = CHUNKERS.get(chunker_name, paragraph.chunk)
     return chunker("\n\n".join(raw_text))
 
-
 def _index(chunks: list[str], project_id: str, document_id: str, collection: str):
-    embeddings = embed_texts(chunks)   # ← was embed_chunks
+    embeddings = embed_texts(chunks)
     index_chunks(
         chunks=chunks,
         embeddings=embeddings,
@@ -50,24 +63,26 @@ def _index(chunks: list[str], project_id: str, document_id: str, collection: str
 async def upload_file(
     file: UploadFile = File(...),
     project_id: str = Form(...),
-    collection: str = Form(...),
-    chunker: str = Form(default="paragraph"),  # paragraph | sentence | proposition
+    chunker: str = Form(default="paragraph"),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
+    project = await _get_project(project_id, user["user_id"], db)
+
     if file.content_type not in SUPPORTED_MIME_TYPES:
         raise HTTPException(400, f"Unsupported file type: {file.content_type}")
 
-    collection = collection.strip().lower().replace(" ", "_")
     document_id = str(uuid.uuid4())
     file_bytes = await file.read()
 
     raw_text = parse_document(file_bytes, file.filename)
     chunks = _build_chunks(raw_text, chunker)
-    _index(chunks, project_id, document_id, collection)
+    _index(chunks, project_id, document_id, project.collection)
 
     return {
         "document_id": document_id,
-        "collection": collection,
         "project_id": project_id,
+        "collection": project.collection,
         "filename": file.filename,
         "chunker": chunker,
         "chunks_indexed": len(chunks),
@@ -80,22 +95,25 @@ async def upload_file(
 class URLPayload(BaseModel):
     url: str
     project_id: str
-    collection: str
     chunker: str = "paragraph"
 
 @router.post("/url")
-async def upload_url(payload: URLPayload):
-    collection = payload.collection.strip().lower().replace(" ", "_")
+async def upload_url(
+    payload: URLPayload,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    project = await _get_project(payload.project_id, user["user_id"], db)
     document_id = str(uuid.uuid4())
 
     raw_text = await parse_url(payload.url)
     chunks = _build_chunks(raw_text, payload.chunker)
-    _index(chunks, payload.project_id, document_id, collection)
+    _index(chunks, payload.project_id, document_id, project.collection)
 
     return {
         "document_id": document_id,
-        "collection": collection,
         "project_id": payload.project_id,
+        "collection": project.collection,
         "url": payload.url,
         "chunker": payload.chunker,
         "chunks_indexed": len(chunks),
@@ -109,22 +127,25 @@ class GDrivePayload(BaseModel):
     file_id: str
     access_token: str
     project_id: str
-    collection: str
     chunker: str = "paragraph"
 
 @router.post("/gdrive")
-async def upload_gdrive(payload: GDrivePayload):
-    collection = payload.collection.strip().lower().replace(" ", "_")
+async def upload_gdrive(
+    payload: GDrivePayload,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    project = await _get_project(payload.project_id, user["user_id"], db)
     document_id = str(uuid.uuid4())
 
     raw_text = await parse_gdrive(payload.file_id, payload.access_token)
     chunks = _build_chunks(raw_text, payload.chunker)
-    _index(chunks, payload.project_id, document_id, collection)
+    _index(chunks, payload.project_id, document_id, project.collection)
 
     return {
         "document_id": document_id,
-        "collection": collection,
         "project_id": payload.project_id,
+        "collection": project.collection,
         "file_id": payload.file_id,
         "chunker": payload.chunker,
         "chunks_indexed": len(chunks),
