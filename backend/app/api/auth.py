@@ -5,13 +5,15 @@ from sqlalchemy import select
 from jose import jwt
 from app.core.config import settings
 from app.core.db import get_db
-from app.models.tables import User
+from app.models.tables import User, Project, Document
+from app.core.auth import get_current_user
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 import uuid
 import bcrypt
 
 router = APIRouter()
+
 
 # ── Password helpers ──────────────────────────────────────────────────────────
 
@@ -28,8 +30,12 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
 
+class UpdateMeRequest(BaseModel):
+    email: str | None = None
+    password: str | None = None
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+# ── Register ──────────────────────────────────────────────────────────────────
 
 @router.post("/register")
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
@@ -46,6 +52,8 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     await db.commit()
     return {"user_id": user.id, "email": user.email}
 
+
+# ── Login ─────────────────────────────────────────────────────────────────────
 
 @router.post("/login")
 async def login(
@@ -64,3 +72,75 @@ async def login(
         algorithm="HS256",
     )
     return {"access_token": token, "token_type": "bearer"}
+
+
+# ── Get current user ──────────────────────────────────────────────────────────
+
+@router.get("/me")
+async def get_me(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    result = await db.execute(select(User).where(User.id == user["user_id"]))
+    u = result.scalar_one_or_none()
+    if not u:
+        raise HTTPException(404, "User not found")
+    return {"user_id": u.id, "email": u.email, "created_at": u.created_at}
+
+
+# ── Update current user ───────────────────────────────────────────────────────
+
+@router.patch("/me")
+async def update_me(
+    body: UpdateMeRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    result = await db.execute(select(User).where(User.id == user["user_id"]))
+    u = result.scalar_one_or_none()
+    if not u:
+        raise HTTPException(404, "User not found")
+
+    if body.email:
+        # check email not taken by another user
+        existing = await db.execute(select(User).where(User.email == body.email))
+        if existing.scalar_one_or_none():
+            raise HTTPException(400, "Email already in use")
+        u.email = body.email
+
+    if body.password:
+        u.hashed_password = hash_password(body.password)
+
+    await db.commit()
+    return {"user_id": u.id, "email": u.email}
+
+
+# ── Delete current user ───────────────────────────────────────────────────────
+
+@router.delete("/me")
+async def delete_me(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    result = await db.execute(select(User).where(User.id == user["user_id"]))
+    u = result.scalar_one_or_none()
+    if not u:
+        raise HTTPException(404, "User not found")
+
+    # delete all Qdrant collections for this user's projects
+    from app.services.indexer import delete_collection
+    projects_result = await db.execute(
+        select(Project).where(Project.user_id == user["user_id"])
+    )
+    projects = projects_result.scalars().all()
+    for project in projects:
+        delete_collection(project.collection)
+
+    # delete user — cascades to projects → documents in postgres
+    await db.delete(u)
+    await db.commit()
+
+    return {
+        "deleted_user": user["user_id"],
+        "deleted_projects": len(projects),
+    }
