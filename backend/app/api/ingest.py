@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.auth import get_current_user
 from app.core.db import get_db
-from app.models.tables import Project
+from app.models.tables import Project, Document
 from app.services.parser import parse_document, parse_url, parse_gdrive
 from app.services.embedder import embed_texts
 from app.services.indexer import index_chunks
@@ -56,6 +56,26 @@ def _index(chunks: list[str], project_id: str, document_id: str, collection: str
         collection=collection,
     )
 
+async def _save_document(
+    db: AsyncSession,
+    document_id: str,
+    project_id: str,
+    collection: str,
+    filename: str,
+    source: str,
+    chunks_count: int,
+):
+    doc = Document(
+        id=document_id,
+        project_id=project_id,
+        collection=collection,
+        filename=filename,
+        source=source,
+        chunks=str(chunks_count),
+    )
+    db.add(doc)
+    await db.commit()
+
 
 # ── 1. File upload ────────────────────────────────────────────────────────────
 
@@ -78,6 +98,10 @@ async def upload_file(
     raw_text = parse_document(file_bytes, file.filename)
     chunks = _build_chunks(raw_text, chunker)
     _index(chunks, project_id, document_id, project.collection)
+    await _save_document(             # ← saves to postgres
+        db, document_id, project_id,
+        project.collection, file.filename, "file", len(chunks)
+    )
 
     return {
         "document_id": document_id,
@@ -109,6 +133,10 @@ async def upload_url(
     raw_text = await parse_url(payload.url)
     chunks = _build_chunks(raw_text, payload.chunker)
     _index(chunks, payload.project_id, document_id, project.collection)
+    await _save_document(             # ← saves to postgres
+        db, document_id, payload.project_id,
+        project.collection, payload.url, "url", len(chunks)
+    )
 
     return {
         "document_id": document_id,
@@ -141,6 +169,10 @@ async def upload_gdrive(
     raw_text = await parse_gdrive(payload.file_id, payload.access_token)
     chunks = _build_chunks(raw_text, payload.chunker)
     _index(chunks, payload.project_id, document_id, project.collection)
+    await _save_document(             # ← saves to postgres
+        db, document_id, payload.project_id,
+        project.collection, payload.file_id, "gdrive", len(chunks)
+    )
 
     return {
         "document_id": document_id,

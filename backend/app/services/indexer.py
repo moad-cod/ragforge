@@ -1,15 +1,14 @@
 from qdrant_client import QdrantClient
-from qdrant_client.models import PointStruct, VectorParams, Distance
+from qdrant_client.models import PointStruct, VectorParams, Distance, Filter, FieldCondition, MatchValue
 from app.core.config import settings
 import uuid
 
 qdrant = QdrantClient(
     url=settings.QDRANT_URL,
-    api_key=settings.QDRANT_API_KEY or None,  
+    api_key=settings.QDRANT_API_KEY or None,
 )
 
 def ensure_collection(collection: str, vector_size: int = 384):
-    """Create collection if it doesn't exist yet."""
     existing = [c.name for c in qdrant.get_collections().collections]
     if collection not in existing:
         qdrant.create_collection(
@@ -22,7 +21,7 @@ def index_chunks(
     embeddings: list[list[float]],
     project_id: str,
     document_id: str,
-    collection: str,          
+    collection: str,
 ):
     ensure_collection(collection)
 
@@ -40,3 +39,12 @@ def index_chunks(
         for i, (chunk, embedding) in enumerate(zip(chunks, embeddings))
     ]
     qdrant.upsert(collection_name=collection, points=points)
+
+def delete_document_chunks(document_id: str, collection: str):
+    """Delete all Qdrant points belonging to a document."""
+    qdrant.delete(
+        collection_name=collection,
+        points_selector=Filter(
+            must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]
+        ),
+    )
