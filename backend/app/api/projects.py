@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.auth import get_current_user
 from app.core.db import get_db
-from app.models.tables import Project
+from app.models.tables import Document, Project
 from pydantic import BaseModel
 import uuid
 
@@ -53,3 +53,38 @@ async def get_project(
     if not project:
         raise HTTPException(404, "Project not found")
     return {"project_id": project.id, "name": project.name, "collection": project.collection}
+
+@router.delete("/{project_id}")
+async def delete_project(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == user["user_id"])
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    # delete all Qdrant chunks for every document
+    from app.services.indexer import delete_document_chunks, delete_collection
+    docs_result = await db.execute(
+        select(Document).where(Document.project_id == project_id)
+    )
+    docs = docs_result.scalars().all()
+    for doc in docs:
+        delete_document_chunks(document_id=doc.id, collection=project.collection)
+
+    # ✅ delete the collection itself from Qdrant
+    delete_collection(project.collection)
+
+    # delete project from postgres (cascades to documents)
+    await db.delete(project)
+    await db.commit()
+
+    return {
+        "deleted_project": project_id,
+        "deleted_collection": project.collection,
+        "deleted_documents": len(docs),
+    }

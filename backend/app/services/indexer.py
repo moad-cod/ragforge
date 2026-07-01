@@ -24,7 +24,6 @@ def index_chunks(
     collection: str,
 ):
     ensure_collection(collection)
-
     points = [
         PointStruct(
             id=str(uuid.uuid4()),
@@ -41,10 +40,16 @@ def index_chunks(
     qdrant.upsert(collection_name=collection, points=points)
 
 def delete_document_chunks(document_id: str, collection: str):
-    """Delete all Qdrant points belonging to a document."""
+    """Delete all points belonging to a document."""
     qdrant.delete(
         collection_name=collection,
         points_selector=Filter(
             must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]
         ),
     )
+
+def delete_collection(collection: str):
+    """Remove the entire Qdrant collection."""
+    existing = [c.name for c in qdrant.get_collections().collections]
+    if collection in existing:
+        qdrant.delete_collection(collection_name=collection)
