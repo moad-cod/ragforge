@@ -1,230 +1,284 @@
 # RAGForge
 
-A developer-friendly RAG SaaS platform with built-in evaluation. Upload documents, query them with an LLM, and measure the quality of every answer — automatically.
-
-> **Core differentiator:** Most RAG platforms give you retrieval. RAGForge gives you retrieval *and* tells you how good it is.
+A production-ready RAG (Retrieval-Augmented Generation) SaaS backend with strong evaluation capabilities, multi-tenant auth, and support for multiple LLM providers.
 
 ---
 
-## What it does
+## Features
 
-- Ingest documents from multiple sources (files, URLs, Google Drive)
-- Chunk, embed, and index them into a vector database
-- Answer questions using retrieved context + an LLM
-- Automatically evaluate answer quality with RAGAS metrics
-- Track performance over time in an evaluation dashboard
-
----
-
-## Supported formats
-
-| Source | Formats |
-|---|---|
-| File upload | PDF, DOCX, TXT, MD, XLSX, CSV, PPTX, HTML |
-| URL scrape | Any public webpage |
-| Google Drive | Google Docs, Sheets, Slides + any binary file stored in Drive |
+- **Multi-tenant** — each user owns their projects and documents, fully isolated
+- **Multiple file types** — PDF, DOCX, XLSX, PPTX, CSV, HTML, Markdown, TXT
+- **Multiple ingest sources** — file upload, URL scraping, Google Drive
+- **Multiple LLM providers** — Gemini and Groq (OpenAI-compatible API)
+- **Multiple chunking strategies** — paragraph, sentence, proposition
+- **Vector search** — Qdrant with per-project and per-document filtering
+- **JWT authentication** — secure, stateless, 7-day token expiry
+- **Full CRUD** — users, projects, documents
 
 ---
 
-## Tech stack
+## Tech Stack
 
 | Layer | Technology |
 |---|---|
 | Backend | FastAPI + Python 3.12 |
-| Frontend | Next.js 15 + TypeScript + Tailwind + shadcn/ui |
-| Database | PostgreSQL |
+| Database | PostgreSQL (asyncpg + SQLAlchemy async) |
 | Vector DB | Qdrant |
-| Embeddings | Sentence Transformers |
-| LLM | Groq |
-| Evaluation | RAGAS |
-| Observability | Helicone |
-| Background jobs | Celery + Redis |
-| Deployment | Railway (backend) + Vercel (frontend) |
+| Embeddings | BAAI/bge-small-en-v1.5 (local, no API key) |
+| LLM | Gemini 2.5 Flash / Groq Llama 3.3 70B |
+| Auth | JWT (python-jose) + bcrypt |
+| Parsing | PyMuPDF, python-docx, openpyxl, python-pptx, BeautifulSoup |
 
 ---
 
-## Project structure
+## Project Structure
 
 ```
-ragforge/
-├── backend/
-│   ├── app/
-│   │   ├── api/                 # Route handlers
-│   │   │   └── documents.py     # Upload endpoints
-│   │   ├── services/
-│   │   │   ├── parser.py        # Multi-format document parser
-│   │   │   ├── chunker.py       # Chunking strategies (v1/v2/v3)
-│   │   │   ├── embedder.py      # Embedding generation
-│   │   │   └── retriever.py     # Qdrant storage + retrieval
-│   │   ├── evaluation/          # RAGAS evaluation module
-│   │   │   ├── router.py
-│   │   │   ├── service.py
-│   │   │   ├── ragas_evaluator.py
-│   │   │   └── metrics.py
-│   │   ├── models/
-│   │   └── schemas/
-│   ├── tests/
-│   └── requirements.txt
-├── frontend/
-│   ├── app/
-│   ├── components/
-│   └── lib/
-├── docker-compose.yml
-└── README.md
+backend/
+├── app/
+│   ├── api/
+│   │   ├── auth.py         # register, login, me
+│   │   ├── projects.py     # project CRUD
+│   │   ├── documents.py    # document CRUD
+│   │   ├── ingest.py       # file / url / gdrive upload
+│   │   └── query.py        # RAG query endpoint
+│   ├── core/
+│   │   ├── auth.py         # JWT dependency
+│   │   ├── config.py       # settings from .env
+│   │   └── db.py           # async SQLAlchemy engine
+│   ├── models/
+│   │   └── tables.py       # User, Project, Document
+│   ├── services/
+│   │   ├── parser.py       # file + url + gdrive parsers
+│   │   ├── embedder.py     # sentence-transformers
+│   │   ├── indexer.py      # Qdrant upsert + delete
+│   │   ├── retriever.py    # Qdrant search
+│   │   └── chunkers/
+│   │       ├── paragraph.py
+│   │       ├── sentence.py
+│   │       └── proposition.py
+│   └── main.py
+├── create_tables.py
+├── requirements.txt
+└── .env
 ```
 
 ---
 
-## Getting started
+## Setup
 
-### Prerequisites
+### 1. Prerequisites
 
-- Python 3.12
-- Docker + Docker Compose
-- A Groq API key (free at [console.groq.com](https://console.groq.com))
+- Python 3.12+
+- PostgreSQL running locally
+- Qdrant running locally (`docker run -p 6333:6333 qdrant/qdrant`)
 
-### 1. Clone the repo
+### 2. Clone and install
 
 ```bash
 git clone https://github.com/yourname/ragforge.git
-cd ragforge
-```
-
-### 2. Start infrastructure
-
-```bash
-docker-compose up -d   # starts PostgreSQL + Qdrant
-```
-
-### 3. Set up the backend
-
-```bash
-cd backend
+cd ragforge/backend
 python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Configure environment
+### 3. Environment variables
+
+Create a `.env` file:
+
+```dotenv
+DATABASE_URL=postgresql+asyncpg://ragforge:ragforge@localhost:5432/ragforge
+SECRET_KEY=your-random-secret-key-here
+
+QDRANT_URL=http://localhost:6333
+QDRANT_API_KEY=
+
+GEMINI_API_KEY=your_gemini_key
+GROQ_API_KEY=your_groq_key
+```
+
+Generate a secret key:
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+### 4. Create database
 
 ```bash
-cp .env.example .env
+psql -U postgres -c "CREATE USER ragforge WITH PASSWORD 'ragforge';"
+psql -U postgres -c "CREATE DATABASE ragforge OWNER ragforge;"
 ```
 
-```env
-# .env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ragforge
-QDRANT_URL=http://localhost:6333
-GROQ_API_KEY=your_groq_api_key
+### 5. Create tables
+
+```bash
+python create_tables.py
 ```
 
-### 5. Run the backend
+### 6. Run
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-API docs available at `http://localhost:8000/docs`
+API docs: `http://localhost:8000/docs`
 
 ---
 
-## API endpoints
+## API Reference
+
+### Auth
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/auth/register` | Create account |
+| POST | `/auth/login` | Get JWT token |
+| GET | `/auth/me` | Get current user |
+| PATCH | `/auth/me` | Update email or password |
+| DELETE | `/auth/me` | Delete account + all data |
+
+### Projects
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/projects/` | Create project |
+| GET | `/projects/` | List projects |
+| GET | `/projects/{id}` | Get project |
+| PATCH | `/projects/{id}` | Rename project |
+| DELETE | `/projects/{id}` | Delete project + documents + Qdrant collection |
+
+### Documents
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/documents/?project_id=` | List documents |
+| GET | `/documents/{id}` | Get document |
+| DELETE | `/documents/{id}` | Delete document + Qdrant chunks |
 
 ### Ingest
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/documents/upload/file` | Upload a local file |
-| POST | `/documents/upload/url` | Scrape a public URL |
-| POST | `/documents/upload/gdrive` | Import from Google Drive |
+| POST | `/ingest/file` | Upload file (multipart/form-data) |
+| POST | `/ingest/url` | Scrape a public URL |
+| POST | `/ingest/gdrive` | Import from Google Drive |
 
-### Chunking versions
-
-Pass `?version=v1` (default), `v2`, or `v3` to any upload endpoint:
-
-| Version | Strategy |
-|---|---|
-| v1 | Paragraph-based |
-| v2 | Proposition-based |
-| v3 | Sentence-based |
-
-### Example — upload a file
-
-```bash
-curl -X POST http://localhost:8000/documents/upload/file \
-  -F "file=@report.pdf" \
-  -F "version=v1"
+**Ingest file params:**
+```
+file        — the file (PDF, DOCX, XLSX, PPTX, CSV, HTML, MD, TXT)
+project_id  — which project to index into
+chunker     — paragraph | sentence | proposition (default: paragraph)
 ```
 
+### RAG Query
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/rag/query` | Query documents with LLM |
+
+**Request body:**
 ```json
 {
-  "doc_id": "a1b2c3d4-...",
-  "version": "v1",
-  "source": "file",
-  "name": "report.pdf",
-  "chunks_indexed": 42,
-  "sample_chunks": ["...", "...", "..."]
+  "question": "what is in the documents?",
+  "project_id": "your-project-id",
+  "provider": "gemini",
+  "model": null,
+  "document_id": null
 }
 ```
 
-### Example — scrape a URL
+---
+
+## Quick Start (curl)
 
 ```bash
-curl -X POST http://localhost:8000/documents/upload/url \
+# Register
+curl -s -X POST "http://localhost:8000/auth/register" \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://en.wikipedia.org/wiki/Retrieval-augmented_generation", "version": "v1"}'
-```
+  -d '{"email": "you@example.com", "password": "secret123"}'
 
-### Example — Google Drive
+# Login
+TOKEN=$(curl -s -X POST "http://localhost:8000/auth/login" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=you@example.com&password=secret123" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
-```bash
-curl -X POST http://localhost:8000/documents/upload/gdrive \
+# Create project
+PROJECT_ID=$(curl -s -X POST "http://localhost:8000/projects/" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "file_id": "your_drive_file_id",
-    "access_token": "your_oauth_token",
-    "version": "v1"
-  }'
-```
+  -d '{"name": "my docs"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['project_id'])")
 
-To get a test OAuth token, use the [Google OAuth Playground](https://developers.google.com/oauthplayground) with the Drive API `readonly` scope.
+# Upload file
+curl -X POST "http://localhost:8000/ingest/file" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@/path/to/file.pdf" \
+  -F "project_id=$PROJECT_ID" \
+  -F "chunker=paragraph"
+
+# Query
+curl -s -X POST "http://localhost:8000/rag/query" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"question\": \"what is in the documents?\", \"project_id\": \"$PROJECT_ID\", \"provider\": \"gemini\"}"
+```
 
 ---
 
-## Evaluation (coming in Phase 2)
+## Data Isolation
 
-RAGForge will automatically score every answer using RAGAS metrics:
+Every Qdrant point is stored with `project_id` and `document_id` in its payload. All queries filter by `project_id` and verify ownership via JWT before executing — users can never access each other's data.
 
-| Metric | What it measures |
+```
+User → Projects → Documents → Qdrant points
+         └── Qdrant collection (auto-created, auto-deleted)
+```
+
+---
+
+## Supported File Types
+
+| Extension | Parser |
 |---|---|
-| Faithfulness | Is the answer grounded in the retrieved context? |
-| Answer Relevance | Does the answer actually address the question? |
-| Context Precision | Are the retrieved chunks relevant? |
-| Hallucination Rate | How often does the system make things up? |
+| `.pdf` | PyMuPDF |
+| `.docx` | python-docx |
+| `.xlsx` | openpyxl |
+| `.pptx` | python-pptx |
+| `.csv` | csv stdlib |
+| `.html` / `.htm` | BeautifulSoup |
+| `.md` / `.txt` | plain text |
 
-Results are stored per query and visualised in a dashboard so you can track quality trends over time and compare chunking/retrieval strategies against each other.
+---
+
+## Chunking Strategies
+
+| Strategy | Description | Best for |
+|---|---|---|
+| `paragraph` | Split on double newlines | General documents |
+| `sentence` | Split on sentence boundaries | Dense text |
+| `proposition` | Semantic proposition extraction | High accuracy RAG |
+
+---
+
+## LLM Providers
+
+| Provider | Default Model | Notes |
+|---|---|---|
+| `gemini` | gemini-2.5-flash | Via Google AI Studio |
+| `groq` | llama-3.3-70b-versatile | Fast inference |
+
+Override the model per request with the `model` field.
 
 ---
 
 ## Roadmap
 
-- [x] Phase 1 — Multi-format document ingestion (PDF, DOCX, XLSX, PPTX, CSV, HTML, URL, Google Drive)
-- [ ] Phase 2 — Query API + RAGAS evaluation + human feedback
-- [ ] Phase 3 — Failure analysis + A/B testing + synthetic test generation
-- [ ] Phase 4 — Usage-based pricing + self-hosting option + onboarding flow
-
----
-
-## Cost estimate
-
-| Stage | Monthly cost | Notes |
-|---|---|---|
-| MVP | $0 – $80 | Mostly free tiers |
-| Early users | $100 – $400 | Qdrant + parsing dominate |
-| Growing | $500 – $2,500+ | Scales with document volume |
-
----
-
-## License
-
-MIT
+- [ ] Evaluation module (RAGAS metrics)
+- [ ] A/B testing between retrieval strategies
+- [ ] Evaluation dashboard
+- [ ] Synthetic test question generation
+- [ ] Failure analysis
+- [ ] Stripe billing
+- [ ] Frontend (Next.js)
