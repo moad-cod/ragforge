@@ -8,16 +8,11 @@ from app.models.tables import Project, Document
 from app.services.parser import parse_document, parse_url, parse_gdrive
 from app.services.embedder import embed_texts
 from app.services.indexer import index_chunks
-from app.services.chunkers import paragraph, sentence, proposition
+from app.services.chunkers.registry import ChunkerType, get_chunker
 import uuid
 
 router = APIRouter()
 
-CHUNKERS = {
-    "paragraph": paragraph.chunk,
-    "sentence": sentence.chunk,
-    "proposition": proposition.chunk,
-}
 
 SUPPORTED_MIME_TYPES = {
     "application/pdf",
@@ -42,8 +37,8 @@ async def _get_project(project_id: str, user_id: str, db: AsyncSession) -> Proje
         raise HTTPException(403, "Project not found or access denied")
     return project
 
-def _build_chunks(raw_text: list[str], chunker_name: str) -> list[str]:
-    chunker = CHUNKERS.get(chunker_name, paragraph.chunk)
+def _build_chunks(raw_text: list[str], chunker_type: ChunkerType) -> list[str]:
+    chunker = get_chunker(chunker_type)
     return chunker("\n\n".join(raw_text))
 
 def _index(chunks: list[str], project_id: str, document_id: str, collection: str):
@@ -83,7 +78,7 @@ async def _save_document(
 async def upload_file(
     file: UploadFile = File(...),
     project_id: str = Form(...),
-    chunker: str = Form(default="paragraph"),
+    chunker: ChunkerType = Form(default=ChunkerType.paragraph),  # ← enum
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -98,7 +93,7 @@ async def upload_file(
     raw_text = parse_document(file_bytes, file.filename)
     chunks = _build_chunks(raw_text, chunker)
     _index(chunks, project_id, document_id, project.collection)
-    await _save_document(             # ← saves to postgres
+    await _save_document(
         db, document_id, project_id,
         project.collection, file.filename, "file", len(chunks)
     )
@@ -108,7 +103,7 @@ async def upload_file(
         "project_id": project_id,
         "collection": project.collection,
         "filename": file.filename,
-        "chunker": chunker,
+        "chunker": chunker.value,       # ← .value gives the string
         "chunks_indexed": len(chunks),
         "sample_chunks": chunks[:3],
     }
@@ -119,7 +114,7 @@ async def upload_file(
 class URLPayload(BaseModel):
     url: str
     project_id: str
-    chunker: str = "paragraph"
+    chunker: ChunkerType = ChunkerType.paragraph   # ← enum with default
 
 @router.post("/url")
 async def upload_url(
@@ -133,7 +128,7 @@ async def upload_url(
     raw_text = await parse_url(payload.url)
     chunks = _build_chunks(raw_text, payload.chunker)
     _index(chunks, payload.project_id, document_id, project.collection)
-    await _save_document(             # ← saves to postgres
+    await _save_document(
         db, document_id, payload.project_id,
         project.collection, payload.url, "url", len(chunks)
     )
@@ -143,7 +138,7 @@ async def upload_url(
         "project_id": payload.project_id,
         "collection": project.collection,
         "url": payload.url,
-        "chunker": payload.chunker,
+        "chunker": payload.chunker.value,
         "chunks_indexed": len(chunks),
         "sample_chunks": chunks[:3],
     }
@@ -155,7 +150,7 @@ class GDrivePayload(BaseModel):
     file_id: str
     access_token: str
     project_id: str
-    chunker: str = "paragraph"
+    chunker: ChunkerType = ChunkerType.paragraph   # ← enum with default
 
 @router.post("/gdrive")
 async def upload_gdrive(
@@ -169,7 +164,7 @@ async def upload_gdrive(
     raw_text = await parse_gdrive(payload.file_id, payload.access_token)
     chunks = _build_chunks(raw_text, payload.chunker)
     _index(chunks, payload.project_id, document_id, project.collection)
-    await _save_document(             # ← saves to postgres
+    await _save_document(
         db, document_id, payload.project_id,
         project.collection, payload.file_id, "gdrive", len(chunks)
     )
@@ -179,7 +174,7 @@ async def upload_gdrive(
         "project_id": payload.project_id,
         "collection": project.collection,
         "file_id": payload.file_id,
-        "chunker": payload.chunker,
+        "chunker": payload.chunker.value,
         "chunks_indexed": len(chunks),
         "sample_chunks": chunks[:3],
     }
