@@ -9,9 +9,17 @@ from app.models.tables import Project
 from app.services.embedder import embed_query
 from app.services.retriever import search
 from app.core.config import settings
+from app.services.chunkers.multimodal import embed_query_tokens  # ← fixed typo
 from openai import OpenAI
+from qdrant_client import QdrantClient                           # ← added
+from qdrant_client.models import Filter, FieldCondition, MatchValue  # ← added
 
 router = APIRouter()
+
+qdrant = QdrantClient(                                           # ← added
+    url=settings.QDRANT_URL,
+    api_key=settings.QDRANT_API_KEY or None,
+)
 
 LLM_CONFIGS = {
     "gemini": {
@@ -37,7 +45,7 @@ class QueryRequest(BaseModel):
     provider: Literal["gemini", "groq"] = "gemini"
     model: str | None = None
     document_id: str | None = None
-    use_parent_context: bool = False    # ← set True for hierarchical projects
+    use_parent_context: bool = False
 
 
 @router.post("/query")
@@ -53,7 +61,6 @@ async def query(
         )
     )
     project = result.scalar_one_or_none()
-
     if not project:
         raise HTTPException(403, "Project not found or access denied")
 
@@ -64,7 +71,7 @@ async def query(
         project_id=request.project_id,
         collection=project.collection,
         document_id=request.document_id,
-        use_parent_context=request.use_parent_context,  # ← pass through
+        use_parent_context=request.use_parent_context,
     )
 
     if not contexts:
@@ -103,4 +110,60 @@ Question: {request.question}"""
         "use_parent_context": request.use_parent_context,
         "answer": response.choices[0].message.content,
         "retrieved_chunks": contexts,
+    }
+
+
+@router.post("/multimodal-query")
+async def multimodal_query(
+    request: QueryRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Project).where(
+            Project.id == request.project_id,
+            Project.user_id == user["user_id"],
+        )
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(403, "Project not found or access denied")
+
+    query_vectors = embed_query_tokens(request.question)
+    collection = f"{project.collection}_multimodal"
+
+    results = qdrant.query_points(
+        collection_name=collection,
+        query=query_vectors,
+        query_filter=Filter(must=[
+            FieldCondition(key="project_id", match=MatchValue(value=request.project_id))
+        ]),
+        limit=3,
+    )
+
+    if not results.points:
+        return {"answer": "No pages found.", "pages": []}
+
+    page_urls = [r.payload["page_image_url"] for r in results.points]
+
+    messages = [
+        {"type": "text", "text": f"Answer based strictly on the document pages below:\n{request.question}"},
+        *[{"type": "image_url", "image_url": {"url": url}} for url in page_urls]
+    ]
+
+    client, _ = get_llm_client("gemini")
+    response = client.chat.completions.create(
+        model="gemini-2.5-flash",
+        messages=[{"role": "user", "content": messages}],
+        max_tokens=2048,
+    )
+
+    return {
+        "question": request.question,
+        "project_id": request.project_id,
+        "answer": response.choices[0].message.content,
+        "pages_used": [
+            {"page_num": r.payload["page_num"], "image_url": r.payload["page_image_url"]}
+            for r in results.points
+        ],
     }

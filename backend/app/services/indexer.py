@@ -85,3 +85,44 @@ def delete_collection(collection: str):
     existing = [c.name for c in qdrant.get_collections().collections]
     if collection in existing:
         qdrant.delete_collection(collection_name=collection)
+def ensure_multimodal_collection(collection: str, vector_size: int = 128):
+    """Create a multi-vector collection for ColQwen2 page embeddings."""
+    from qdrant_client.models import VectorParams, Distance, MultiVectorConfig, MultiVectorComparator
+    existing = [c.name for c in qdrant.get_collections().collections]
+    if collection not in existing:
+        qdrant.create_collection(
+            collection_name=collection,
+            vectors_config=VectorParams(
+                size=vector_size,
+                distance=Distance.COSINE,
+                multivector_config=MultiVectorConfig(
+                    comparator=MultiVectorComparator.MAX_SIM,
+                ),
+            ),
+        )
+
+def index_multimodal_pages(
+    page_embeddings: list[list[list[float]]],
+    page_image_urls: list[str],
+    project_id: str,
+    document_id: str,
+    collection: str,
+):
+    """Store ColQwen2 multi-vector page embeddings in Qdrant."""
+    ensure_multimodal_collection(collection)
+
+    points = [
+        PointStruct(
+            id=str(uuid.uuid4()),
+            vector=page_emb,          # matrix: (num_patches, 128)
+            payload={
+                "project_id": project_id,
+                "document_id": document_id,
+                "page_num": i + 1,
+                "page_image_url": url,
+                "chunk_type": "page",
+            }
+        )
+        for i, (page_emb, url) in enumerate(zip(page_embeddings, page_image_urls))
+    ]
+    qdrant.upsert(collection_name=collection, points=points)

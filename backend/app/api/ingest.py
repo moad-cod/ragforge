@@ -7,10 +7,11 @@ from app.core.db import get_db
 from app.models.tables import Project, Document
 from app.services.parser import parse_document, parse_url, parse_gdrive
 from app.services.embedder import embed_texts
-from app.services.indexer import index_chunks, index_hierarchical_chunks
+from app.services.indexer import index_chunks, index_hierarchical_chunks, index_multimodal_pages
 from app.services.chunkers.registry import ChunkerType, get_chunker
 from app.services.chunkers import late_chunking as late_chunking_module
 from app.services.chunkers import hierarchical as hierarchical_module
+from app.services.chunkers.multimodal import ingest_pdf_multimodal
 import uuid
 
 router = APIRouter()
@@ -108,7 +109,48 @@ async def _save_document(
 
 
 # ── 1. File upload ────────────────────────────────────────────────────────────
+@router.post("/multimodal")
+async def upload_multimodal(
+    file: UploadFile = File(...),
+    project_id: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    if file.content_type != "application/pdf":
+        raise HTTPException(400, "Multimodal ingestion only supports PDF files")
 
+    project = await _get_project(project_id, user["user_id"], db)
+    document_id = str(uuid.uuid4())
+    file_bytes = await file.read()
+
+    # render + embed + upload to R2
+    page_embeddings, page_image_urls, num_pages = ingest_pdf_multimodal(
+        file_bytes, document_id
+    )
+
+    # store in Qdrant with MaxSim multi-vector collection
+    collection = f"{project.collection}_multimodal"
+    index_multimodal_pages(
+        page_embeddings=page_embeddings,
+        page_image_urls=page_image_urls,
+        project_id=project_id,
+        document_id=document_id,
+        collection=collection,
+    )
+
+    await _save_document(
+        db, document_id, project_id,
+        collection, file.filename, "multimodal", num_pages
+    )
+
+    return {
+        "document_id": document_id,
+        "project_id": project_id,
+        "collection": collection,
+        "filename": file.filename,
+        "pages_indexed": num_pages,
+        "page_image_urls": page_image_urls,
+    }
 @router.post("/file")
 async def upload_file(
     file: UploadFile = File(...),
