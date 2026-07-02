@@ -9,10 +9,10 @@ from app.services.parser import parse_document, parse_url, parse_gdrive
 from app.services.embedder import embed_texts
 from app.services.indexer import index_chunks
 from app.services.chunkers.registry import ChunkerType, get_chunker
+from app.services.chunkers import late_chunking as late_chunking_module
 import uuid
 
 router = APIRouter()
-
 
 SUPPORTED_MIME_TYPES = {
     "application/pdf",
@@ -51,6 +51,18 @@ def _index(chunks: list[str], project_id: str, document_id: str, collection: str
         collection=collection,
     )
 
+def _index_late_chunking(text: str, project_id: str, document_id: str, collection: str) -> list[str]:
+    """Special path — embeddings come from the chunker itself, skip re-embedding."""
+    chunks, embeddings = late_chunking_module.chunk_with_embeddings(text)
+    index_chunks(
+        chunks=chunks,
+        embeddings=embeddings,
+        project_id=project_id,
+        document_id=document_id,
+        collection=collection,
+    )
+    return chunks
+
 async def _save_document(
     db: AsyncSession,
     document_id: str,
@@ -78,7 +90,7 @@ async def _save_document(
 async def upload_file(
     file: UploadFile = File(...),
     project_id: str = Form(...),
-    chunker: ChunkerType = Form(default=ChunkerType.paragraph),  # ← enum
+    chunker: ChunkerType = Form(default=ChunkerType.paragraph),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -89,10 +101,16 @@ async def upload_file(
 
     document_id = str(uuid.uuid4())
     file_bytes = await file.read()
-
     raw_text = parse_document(file_bytes, file.filename)
-    chunks = _build_chunks(raw_text, chunker)
-    _index(chunks, project_id, document_id, project.collection)
+    full_text = "\n\n".join(raw_text)
+
+    # ← late chunking uses its own embeddings
+    if chunker == ChunkerType.late_chunking:
+        chunks = _index_late_chunking(full_text, project_id, document_id, project.collection)
+    else:
+        chunks = _build_chunks(raw_text, chunker)
+        _index(chunks, project_id, document_id, project.collection)
+
     await _save_document(
         db, document_id, project_id,
         project.collection, file.filename, "file", len(chunks)
@@ -103,7 +121,7 @@ async def upload_file(
         "project_id": project_id,
         "collection": project.collection,
         "filename": file.filename,
-        "chunker": chunker.value,       # ← .value gives the string
+        "chunker": chunker.value,
         "chunks_indexed": len(chunks),
         "sample_chunks": chunks[:3],
     }
@@ -114,7 +132,7 @@ async def upload_file(
 class URLPayload(BaseModel):
     url: str
     project_id: str
-    chunker: ChunkerType = ChunkerType.paragraph   # ← enum with default
+    chunker: ChunkerType = ChunkerType.paragraph
 
 @router.post("/url")
 async def upload_url(
@@ -124,10 +142,15 @@ async def upload_url(
 ):
     project = await _get_project(payload.project_id, user["user_id"], db)
     document_id = str(uuid.uuid4())
-
     raw_text = await parse_url(payload.url)
-    chunks = _build_chunks(raw_text, payload.chunker)
-    _index(chunks, payload.project_id, document_id, project.collection)
+    full_text = "\n\n".join(raw_text)
+
+    if payload.chunker == ChunkerType.late_chunking:
+        chunks = _index_late_chunking(full_text, payload.project_id, document_id, project.collection)
+    else:
+        chunks = _build_chunks(raw_text, payload.chunker)
+        _index(chunks, payload.project_id, document_id, project.collection)
+
     await _save_document(
         db, document_id, payload.project_id,
         project.collection, payload.url, "url", len(chunks)
@@ -150,7 +173,7 @@ class GDrivePayload(BaseModel):
     file_id: str
     access_token: str
     project_id: str
-    chunker: ChunkerType = ChunkerType.paragraph   # ← enum with default
+    chunker: ChunkerType = ChunkerType.paragraph
 
 @router.post("/gdrive")
 async def upload_gdrive(
@@ -160,10 +183,15 @@ async def upload_gdrive(
 ):
     project = await _get_project(payload.project_id, user["user_id"], db)
     document_id = str(uuid.uuid4())
-
     raw_text = await parse_gdrive(payload.file_id, payload.access_token)
-    chunks = _build_chunks(raw_text, payload.chunker)
-    _index(chunks, payload.project_id, document_id, project.collection)
+    full_text = "\n\n".join(raw_text)
+
+    if payload.chunker == ChunkerType.late_chunking:
+        chunks = _index_late_chunking(full_text, payload.project_id, document_id, project.collection)
+    else:
+        chunks = _build_chunks(raw_text, payload.chunker)
+        _index(chunks, payload.project_id, document_id, project.collection)
+
     await _save_document(
         db, document_id, payload.project_id,
         project.collection, payload.file_id, "gdrive", len(chunks)
