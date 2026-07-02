@@ -7,9 +7,10 @@ from app.core.db import get_db
 from app.models.tables import Project, Document
 from app.services.parser import parse_document, parse_url, parse_gdrive
 from app.services.embedder import embed_texts
-from app.services.indexer import index_chunks
+from app.services.indexer import index_chunks, index_hierarchical_chunks
 from app.services.chunkers.registry import ChunkerType, get_chunker
 from app.services.chunkers import late_chunking as late_chunking_module
+from app.services.chunkers import hierarchical as hierarchical_module
 import uuid
 
 router = APIRouter()
@@ -52,7 +53,6 @@ def _index(chunks: list[str], project_id: str, document_id: str, collection: str
     )
 
 def _index_late_chunking(text: str, project_id: str, document_id: str, collection: str) -> list[str]:
-    """Special path — embeddings come from the chunker itself, skip re-embedding."""
     chunks, embeddings = late_chunking_module.chunk_with_embeddings(text)
     index_chunks(
         chunks=chunks,
@@ -62,6 +62,29 @@ def _index_late_chunking(text: str, project_id: str, document_id: str, collectio
         collection=collection,
     )
     return chunks
+
+def _index_hierarchical(text: str, project_id: str, document_id: str, collection: str) -> list[str]:
+    chunks = hierarchical_module.chunk_hierarchical(text)
+    index_hierarchical_chunks(chunks, project_id, document_id, collection)
+    return [c.text for c in chunks if c.chunk_type == "child"]
+
+def _process_and_index(
+    raw_text: list[str],
+    chunker: ChunkerType,
+    project_id: str,
+    document_id: str,
+    collection: str,
+) -> list[str]:
+    """Single entry point for all chunking strategies."""
+    full_text = "\n\n".join(raw_text)
+    if chunker == ChunkerType.late_chunking:
+        return _index_late_chunking(full_text, project_id, document_id, collection)
+    elif chunker == ChunkerType.hierarchical:
+        return _index_hierarchical(full_text, project_id, document_id, collection)
+    else:
+        chunks = _build_chunks(raw_text, chunker)
+        _index(chunks, project_id, document_id, collection)
+        return chunks
 
 async def _save_document(
     db: AsyncSession,
@@ -102,14 +125,8 @@ async def upload_file(
     document_id = str(uuid.uuid4())
     file_bytes = await file.read()
     raw_text = parse_document(file_bytes, file.filename)
-    full_text = "\n\n".join(raw_text)
 
-    # ← late chunking uses its own embeddings
-    if chunker == ChunkerType.late_chunking:
-        chunks = _index_late_chunking(full_text, project_id, document_id, project.collection)
-    else:
-        chunks = _build_chunks(raw_text, chunker)
-        _index(chunks, project_id, document_id, project.collection)
+    chunks = _process_and_index(raw_text, chunker, project_id, document_id, project.collection)
 
     await _save_document(
         db, document_id, project_id,
@@ -143,13 +160,8 @@ async def upload_url(
     project = await _get_project(payload.project_id, user["user_id"], db)
     document_id = str(uuid.uuid4())
     raw_text = await parse_url(payload.url)
-    full_text = "\n\n".join(raw_text)
 
-    if payload.chunker == ChunkerType.late_chunking:
-        chunks = _index_late_chunking(full_text, payload.project_id, document_id, project.collection)
-    else:
-        chunks = _build_chunks(raw_text, payload.chunker)
-        _index(chunks, payload.project_id, document_id, project.collection)
+    chunks = _process_and_index(raw_text, payload.chunker, payload.project_id, document_id, project.collection)
 
     await _save_document(
         db, document_id, payload.project_id,
@@ -184,13 +196,8 @@ async def upload_gdrive(
     project = await _get_project(payload.project_id, user["user_id"], db)
     document_id = str(uuid.uuid4())
     raw_text = await parse_gdrive(payload.file_id, payload.access_token)
-    full_text = "\n\n".join(raw_text)
 
-    if payload.chunker == ChunkerType.late_chunking:
-        chunks = _index_late_chunking(full_text, payload.project_id, document_id, project.collection)
-    else:
-        chunks = _build_chunks(raw_text, payload.chunker)
-        _index(chunks, payload.project_id, document_id, project.collection)
+    chunks = _process_and_index(raw_text, payload.chunker, payload.project_id, document_id, project.collection)
 
     await _save_document(
         db, document_id, payload.project_id,

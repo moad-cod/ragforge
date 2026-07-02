@@ -37,6 +37,7 @@ class QueryRequest(BaseModel):
     provider: Literal["gemini", "groq"] = "gemini"
     model: str | None = None
     document_id: str | None = None
+    use_parent_context: bool = False    # ← set True for hierarchical projects
 
 
 @router.post("/query")
@@ -63,6 +64,7 @@ async def query(
         project_id=request.project_id,
         collection=project.collection,
         document_id=request.document_id,
+        use_parent_context=request.use_parent_context,  # ← pass through
     )
 
     if not contexts:
@@ -98,6 +100,7 @@ Question: {request.question}"""
         "collection": project.collection,
         "provider": request.provider,
         "model": model,
+        "use_parent_context": request.use_parent_context,
         "answer": response.choices[0].message.content,
         "retrieved_chunks": contexts,
     }

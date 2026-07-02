@@ -39,6 +39,38 @@ def index_chunks(
     ]
     qdrant.upsert(collection_name=collection, points=points)
 
+
+def index_hierarchical_chunks(
+    chunks: list,        # list of HierarchicalChunk dataclasses
+    project_id: str,
+    document_id: str,
+    collection: str,
+):
+    from app.services.embedder import embed_texts
+    ensure_collection(collection)
+
+    texts = [c.text for c in chunks]
+    embeddings = embed_texts(texts)
+
+    points = [
+        PointStruct(
+            id=str(uuid.uuid4()),
+            vector=embedding,
+            payload={
+                "text": chunk.text,
+                "project_id": project_id,
+                "document_id": document_id,
+                "chunk_type": chunk.chunk_type,   # "parent" or "child"
+                "parent_id": chunk.parent_id,     # None for parents, uuid for children
+                "chunk_id": chunk.chunk_id,       # used to look up parent later
+                "chunk_index": chunk.index,
+            }
+        )
+        for chunk, embedding in zip(chunks, embeddings)
+    ]
+    qdrant.upsert(collection_name=collection, points=points)
+
+
 def delete_document_chunks(document_id: str, collection: str):
     """Delete all points belonging to a document."""
     qdrant.delete(
