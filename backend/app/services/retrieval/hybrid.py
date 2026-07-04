@@ -11,6 +11,11 @@ qdrant = QdrantClient(
     api_key=settings.QDRANT_API_KEY or None,
 )
 
+def _as_text(value) -> str:
+    if isinstance(value, list):
+        return " ".join(str(v) for v in value)
+    return str(value) if value is not None else ""
+
 def hybrid_search(
     dense_embedding: list[float],
     query_text: str,
@@ -46,18 +51,16 @@ def hybrid_search(
     if not points:
         return []
 
-    # rerank fused candidates, then truncate to top_k
     if use_rerank:
-        candidates = [p.payload["text"] for p in points]
+        candidates = [_as_text(p.payload.get("text")) for p in points]
         best_indices = rerank_fn(query_text, candidates, top_n=top_k)
         points = [points[i] for i in best_indices]
     else:
         points = points[:top_k]
 
     if not use_parent_context:
-        return [p.payload["text"] for p in points]
+        return [_as_text(p.payload.get("text")) for p in points]
 
-    # ── same parent-expansion logic as the old retriever.py ──
     contexts = []
     seen_parents = set()
     for p in points:
@@ -74,9 +77,9 @@ def hybrid_search(
                 with_vectors=False,
             )
             if parent_results:
-                contexts.append(parent_results[0].payload["text"])
+                contexts.append(_as_text(parent_results[0].payload.get("text")))
                 seen_parents.add(parent_id)
         elif p.payload.get("parent_id") is None:
-            contexts.append(p.payload["text"])
+            contexts.append(_as_text(p.payload.get("text")))
 
     return contexts
