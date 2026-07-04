@@ -1,6 +1,10 @@
 from qdrant_client import QdrantClient
-from qdrant_client.models import PointStruct, VectorParams, Distance, Filter, FieldCondition, MatchValue
+from qdrant_client.models import (
+    PointStruct, VectorParams, Distance, Filter, FieldCondition, MatchValue,
+    SparseVectorParams,
+)
 from app.core.config import settings
+from app.services.retrieval.sparse import embed_sparse
 import uuid
 
 qdrant = QdrantClient(
@@ -13,7 +17,8 @@ def ensure_collection(collection: str, vector_size: int = 384):
     if collection not in existing:
         qdrant.create_collection(
             collection_name=collection,
-            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+            vectors_config={"dense": VectorParams(size=vector_size, distance=Distance.COSINE)},
+            sparse_vectors_config={"sparse": SparseVectorParams()},
         )
 
 def index_chunks(
@@ -24,10 +29,12 @@ def index_chunks(
     collection: str,
 ):
     ensure_collection(collection)
+    sparse_vectors = embed_sparse(chunks)
+
     points = [
         PointStruct(
             id=str(uuid.uuid4()),
-            vector=embedding,
+            vector={"dense": embedding, "sparse": sparse_vectors[i]},
             payload={
                 "text": chunk,
                 "project_id": project_id,
@@ -51,11 +58,12 @@ def index_hierarchical_chunks(
 
     texts = [c.text for c in chunks]
     embeddings = embed_texts(texts)
+    sparse_vectors = embed_sparse(texts)
 
     points = [
         PointStruct(
             id=str(uuid.uuid4()),
-            vector=embedding,
+            vector={"dense": embedding, "sparse": sparse_vectors[i]},
             payload={
                 "text": chunk.text,
                 "project_id": project_id,
@@ -66,7 +74,7 @@ def index_hierarchical_chunks(
                 "chunk_index": chunk.index,
             }
         )
-        for chunk, embedding in zip(chunks, embeddings)
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings))
     ]
     qdrant.upsert(collection_name=collection, points=points)
 
@@ -85,6 +93,8 @@ def delete_collection(collection: str):
     existing = [c.name for c in qdrant.get_collections().collections]
     if collection in existing:
         qdrant.delete_collection(collection_name=collection)
+
+
 def ensure_multimodal_collection(collection: str, vector_size: int = 128):
     """Create a multi-vector collection for ColQwen2 page embeddings."""
     from qdrant_client.models import VectorParams, Distance, MultiVectorConfig, MultiVectorComparator
@@ -114,7 +124,7 @@ def index_multimodal_pages(
     points = [
         PointStruct(
             id=str(uuid.uuid4()),
-            vector=page_emb,          # matrix: (num_patches, 128)
+            vector=page_emb,          # matrix: (num_patches, 128) — untouched, separate collection
             payload={
                 "project_id": project_id,
                 "document_id": document_id,
