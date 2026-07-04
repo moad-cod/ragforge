@@ -73,7 +73,7 @@ async def query(
         query_text=request.question,
         document_id=request.document_id,
         use_parent_context=request.use_parent_context,
-    ),
+    )
 
     if not contexts:
         return {
