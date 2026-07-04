@@ -70,9 +70,10 @@ async def query(
         embedding=query_embedding,
         project_id=request.project_id,
         collection=project.collection,
+        query_text=request.question,
         document_id=request.document_id,
         use_parent_context=request.use_parent_context,
-    )
+    ),
 
     if not contexts:
         return {
