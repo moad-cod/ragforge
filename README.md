@@ -265,13 +265,20 @@ User → Projects → Documents → Qdrant points
 
 ---
 
-## Chunking Strategies
+## Chunking Modes
 
-| Strategy | Description | Best for |
-|---|---|---|
-| `paragraph` | Split on double newlines | General documents |
-| `sentence` | Split on sentence boundaries | Dense text |
-| `proposition` | Semantic proposition extraction | High accuracy RAG |
+The chunker registry is the single source of truth for product metadata. Frontends can call `GET /chunkers` to display available modes.
+
+| ID | Product Name | Tier | Status | Best For |
+|---|---|---|---|---|
+| `fixed_size` | Starter Chunking | Base | Stable | Testing and predictable chunks |
+| `paragraph` | Base Chunking | Base | Stable | Fast general-purpose ingestion |
+| `sentence` | Precision Chunking | Pro | Stable | Dense text and long paragraphs |
+| `semantic` | Semantic Chunking | Pro | Beta | Meaning-aware retrieval |
+| `hierarchical` | Structured Chunking | Business | Beta | Headings, sections, manuals |
+| `late_chunking` | Late Interaction Chunking | Ultimate | Beta | Premium retrieval quality |
+| `proposition` | Ultimate Chunking | Ultimate | Beta | Highest-accuracy semantic RAG |
+| `multimodal` | Multimodal Chunking | Ultimate | Experimental | Visual PDFs and image-heavy documents |
 
 ---
 

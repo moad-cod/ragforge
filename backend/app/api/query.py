@@ -9,7 +9,6 @@ from app.models.tables import Project, Document
 from app.services.embedder import embed_query
 from app.services.retriever import search
 from app.core.config import settings
-from app.services.chunkers.multimodal import embed_query_tokens  # ← fixed typo
 from openai import OpenAI
 from qdrant_client import QdrantClient                           # ← added
 from qdrant_client.models import Filter, FieldCondition, MatchValue  # ← added
@@ -147,6 +146,8 @@ async def multimodal_query(
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(403, "Project not found or access denied")
+
+    from app.services.chunkers.multimodal import embed_query_tokens
 
     query_vectors = await asyncio.to_thread(embed_query_tokens, request.question)
     collection = f"{project.collection}_multimodal"

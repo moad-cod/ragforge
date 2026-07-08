@@ -8,10 +8,14 @@ from app.models.tables import Project, Document
 from app.services.parser import parse_document, parse_url, parse_gdrive
 from app.services.embedder import embed_texts
 from app.services.indexer import index_chunks, index_hierarchical_chunks, index_multimodal_pages
-from app.services.chunkers.registry import ChunkerType, get_chunker
+from app.services.chunkers.registry import (
+    get_chunker,
+    get_chunker_definition,
+    get_default_chunker,
+    validate_chunker,
+)
 from app.services.chunkers import late_chunking as late_chunking_module
 from app.services.chunkers import hierarchical as hierarchical_module
-from app.services.chunkers.multimodal import ingest_pdf_multimodal
 from app.core.config import settings
 from app.services.storage import delete_document_images
 import asyncio
@@ -44,8 +48,8 @@ async def _get_project(project_id: str, user_id: str, db: AsyncSession) -> Proje
         raise HTTPException(403, "Project not found or access denied")
     return project
 
-def _build_chunks(raw_text: list[str], chunker_type: ChunkerType) -> list[str]:
-    chunker = get_chunker(chunker_type)
+def _build_chunks(raw_text: list[str], chunker_id: str) -> list[str]:
+    chunker = get_chunker(chunker_id)
     return chunker("\n\n".join(raw_text))
 
 def _index(chunks: list[str], project_id: str, document_id: str, collection: str):
@@ -78,16 +82,16 @@ def _index_hierarchical(text: str, project_id: str, document_id: str, collection
 
 def _process_and_index(
     raw_text: list[str],
-    chunker: ChunkerType,
+    chunker: str,
     project_id: str,
     document_id: str,
     collection: str,
 ) -> list[str]:
     """Single entry point for all chunking strategies."""
     full_text = "\n\n".join(raw_text)
-    if chunker == ChunkerType.late_chunking:
+    if chunker == "late_chunking":
         return _index_late_chunking(full_text, project_id, document_id, collection)
-    elif chunker == ChunkerType.hierarchical:
+    elif chunker == "hierarchical":
         return _index_hierarchical(full_text, project_id, document_id, collection)
     else:
         chunks = _build_chunks(raw_text, chunker)
@@ -133,13 +137,23 @@ def _validate_file(file: UploadFile):
 def _ingest_text_document(
     file_bytes: bytes,
     filename: str,
-    chunker: ChunkerType,
+    chunker: str,
     project_id: str,
     document_id: str,
     collection: str,
 ) -> list[str]:
     raw_text = parse_document(file_bytes, filename)
     return _process_and_index(raw_text, chunker, project_id, document_id, collection)
+
+def _validate_text_chunker(chunker_id: str) -> str:
+    try:
+        chunker_id = validate_chunker(chunker_id)
+        definition = get_chunker_definition(chunker_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if definition.requires_multimodal:
+        raise HTTPException(400, "Chunker 'multimodal' is available through /ingest/multimodal, not text ingestion.")
+    return chunker_id
 
 async def _cleanup_document_artifacts(document_id: str, collection: str, source: str):
     from app.services.indexer import delete_document_chunks
@@ -179,6 +193,8 @@ async def upload_multimodal(
     file_bytes = await _read_upload(file)
 
     try:
+        from app.services.chunkers.multimodal import ingest_pdf_multimodal
+
         page_embeddings, page_image_urls, num_pages = await asyncio.to_thread(
             ingest_pdf_multimodal, file_bytes, document_id, settings.MAX_MULTIMODAL_PAGES
         )
@@ -216,12 +232,13 @@ async def upload_multimodal(
 async def upload_file(
     file: UploadFile = File(...),
     project_id: str = Form(...),
-    chunker: ChunkerType = Form(default=ChunkerType.paragraph),
+    chunker: str = Form(default=get_default_chunker().id),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     project = await _get_project(project_id, user["user_id"], db)
     _validate_file(file)
+    chunker = _validate_text_chunker(chunker)
 
     document_id = str(uuid.uuid4())
     file_bytes = await _read_upload(file)
@@ -249,7 +266,7 @@ async def upload_file(
         "project_id": project_id,
         "collection": project.collection,
         "filename": file.filename,
-        "chunker": chunker.value,
+        "chunker": chunker,
         "chunks_indexed": len(chunks),
         **_debug_payload(chunks),
     }
@@ -260,7 +277,7 @@ async def upload_file(
 class URLPayload(BaseModel):
     url: str
     project_id: str
-    chunker: ChunkerType = ChunkerType.paragraph
+    chunker: str = get_default_chunker().id
 
 @router.post("/url")
 async def upload_url(
@@ -269,6 +286,7 @@ async def upload_url(
     user: dict = Depends(get_current_user),
 ):
     project = await _get_project(payload.project_id, user["user_id"], db)
+    chunker = _validate_text_chunker(payload.chunker)
     document_id = str(uuid.uuid4())
     raw_text = await parse_url(payload.url)
 
@@ -276,7 +294,7 @@ async def upload_url(
         chunks = await asyncio.to_thread(
             _process_and_index,
             raw_text,
-            payload.chunker,
+            chunker,
             payload.project_id,
             document_id,
             project.collection,
@@ -294,7 +312,7 @@ async def upload_url(
         "project_id": payload.project_id,
         "collection": project.collection,
         "url": payload.url,
-        "chunker": payload.chunker.value,
+        "chunker": chunker,
         "chunks_indexed": len(chunks),
         **_debug_payload(chunks),
     }
@@ -306,7 +324,7 @@ class GDrivePayload(BaseModel):
     file_id: str
     access_token: str
     project_id: str
-    chunker: ChunkerType = ChunkerType.paragraph
+    chunker: str = get_default_chunker().id
 
 @router.post("/gdrive")
 async def upload_gdrive(
@@ -315,6 +333,7 @@ async def upload_gdrive(
     user: dict = Depends(get_current_user),
 ):
     project = await _get_project(payload.project_id, user["user_id"], db)
+    chunker = _validate_text_chunker(payload.chunker)
     document_id = str(uuid.uuid4())
     raw_text = await parse_gdrive(payload.file_id, payload.access_token)
 
@@ -322,7 +341,7 @@ async def upload_gdrive(
         chunks = await asyncio.to_thread(
             _process_and_index,
             raw_text,
-            payload.chunker,
+            chunker,
             payload.project_id,
             document_id,
             project.collection,
@@ -340,7 +359,7 @@ async def upload_gdrive(
         "project_id": payload.project_id,
         "collection": project.collection,
         "file_id": payload.file_id,
-        "chunker": payload.chunker.value,
+        "chunker": chunker,
         "chunks_indexed": len(chunks),
         **_debug_payload(chunks),
     }

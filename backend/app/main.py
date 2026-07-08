@@ -4,6 +4,7 @@ from app.api.projects import router as projects_router
 from app.api.ingest import router as ingest_router
 from app.api.query import router as query_router
 from app.api.documents import router as documents_router
+from app.api.chunkers import router as chunkers_router
 
 app = FastAPI(
     title="RAGForge API",
@@ -15,6 +16,7 @@ app.include_router(projects_router,  prefix="/projects",  tags=["projects"])
 app.include_router(ingest_router,    prefix="/ingest",    tags=["ingest"])
 app.include_router(query_router,     prefix="/rag",       tags=["rag"])
 app.include_router(documents_router, prefix="/documents", tags=["documents"])
+app.include_router(chunkers_router,  prefix="/chunkers",  tags=["chunkers"])
 
 @app.get("/health")
 def health():

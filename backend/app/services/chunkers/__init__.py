@@ -1,8 +1,8 @@
-from app.services.chunkers import (
-    fixed_size,
-    paragraph,
-    sentence,
-    proposition,
-)
+"""Chunking package.
 
-__all__ = ["fixed_size", "paragraph", "sentence", "proposition"]
+Public chunker metadata lives in app.services.chunkers.registry.
+This package initializer intentionally avoids importing chunker modules so
+registry imports stay lightweight and do not load optional ML dependencies.
+"""
+
+__all__ = []

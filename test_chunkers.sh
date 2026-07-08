@@ -40,6 +40,48 @@ json_len() {
   python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'
 }
 
+chunker_ids_for_text_ingest() {
+  python3 -c '
+import json, sys
+chunkers = json.load(sys.stdin)
+ids = [c["id"] for c in chunkers if not c.get("requires_multimodal")]
+print(" ".join(ids))
+'
+}
+
+validate_chunker_metadata() {
+  python3 -c '
+import json, sys
+chunkers = json.load(sys.stdin)
+required = {
+    "id", "name", "tier", "status", "is_beta", "short_description",
+    "long_description", "best_for", "not_recommended_for", "speed_level",
+    "quality_level", "cost_level", "requires_llm", "requires_nltk",
+    "requires_embedding_model", "requires_multimodal", "default",
+}
+ids = [c.get("id") for c in chunkers]
+expected = ["fixed_size", "paragraph", "sentence", "semantic", "hierarchical", "late_chunking", "proposition", "multimodal"]
+if ids != expected:
+    raise SystemExit(f"Unexpected chunker IDs: {ids}")
+for chunker in chunkers:
+    missing = required - set(chunker)
+    extra_private = {"callable_path", "callable", "internal"} & set(chunker)
+    chunker_id = chunker.get("id")
+    if missing:
+        raise SystemExit(f"{chunker_id} missing metadata fields: {sorted(missing)}")
+    if extra_private:
+        raise SystemExit(f"{chunker_id} exposed private fields: {sorted(extra_private)}")
+defaults = [c["id"] for c in chunkers if c["default"]]
+if defaults != ["paragraph"]:
+    raise SystemExit(f"Expected paragraph as only default, got {defaults}")
+if next(c for c in chunkers if c["id"] == "proposition")["status"] != "beta":
+    raise SystemExit("Expected proposition to be beta")
+if next(c for c in chunkers if c["id"] == "multimodal")["status"] != "experimental":
+    raise SystemExit("Expected multimodal to be experimental")
+print("Chunker metadata OK:", ", ".join(ids))
+'
+}
+
 api() {
   local method="$1"
   local path="$2"
@@ -88,7 +130,58 @@ api_allow_failure() {
     -H "Content-Type: application/json" \
     "${auth_args[@]}" \
     "${body_args[@]}")"
-echo "$status"
+  echo "$status"
+  cat "$output"
+}
+
+expect_http_error() {
+  local expected_status="$1"
+  local method="$2"
+  local path="$3"
+  local body="${4:-}"
+  local output="$TMP_DIR/expected-error.json"
+  local status
+  local auth_args=()
+  local body_args=()
+  if [[ -n "$TOKEN" ]]; then
+    auth_args=(-H "Authorization: Bearer $TOKEN")
+  fi
+  if [[ -n "$body" ]]; then
+    body_args=(-d "$body")
+  fi
+
+  status="$(curl -sS -o "$output" -w '%{http_code}' -X "$method" "$BASE_URL$path" \
+    -H "Content-Type: application/json" \
+    "${auth_args[@]}" \
+    "${body_args[@]}")"
+
+  if [[ "$status" != "$expected_status" ]]; then
+    echo "Expected HTTP $expected_status but got HTTP $status for $method $path"
+    python3 -m json.tool "$output" 2>/dev/null || cat "$output"
+    return 1
+  fi
+  cat "$output"
+}
+
+expect_upload_error() {
+  local expected_status="$1"
+  local path="$2"
+  local project_id="$3"
+  local chunker="$4"
+  local output="$TMP_DIR/expected-upload-error.json"
+  local status
+
+  status="$(curl -sS -o "$output" -w '%{http_code}' -X POST "$BASE_URL/ingest/file" \
+    -H "Authorization: Bearer $TOKEN" \
+    -F "file=@$path" \
+    -F "project_id=$project_id" \
+    -F "chunker=$chunker")"
+
+  if [[ "$status" != "$expected_status" ]]; then
+    echo "Expected upload HTTP $expected_status but got HTTP $status for chunker=$chunker"
+    python3 -m json.tool "$output" 2>/dev/null || cat "$output"
+    return 1
+  fi
   cat "$output"
 }
 
@@ -146,6 +239,14 @@ echo "Optional toggles: RUN_URL_TEST=$RUN_URL_TEST RUN_GDRIVE_TEST=$RUN_GDRIVE_T
 echo "Enable all external features with: RUN_URL_TEST=1 RUN_GDRIVE_TEST=1 RUN_MULTIMODAL_TEST=1 RUN_LLM_TESTS=1"
 api GET /health | python3 -m json.tool
 
+info "Chunker registry: list metadata"
+CHUNKERS_JSON="$TMP_DIR/chunkers.json"
+api GET /chunkers > "$CHUNKERS_JSON"
+python3 -m json.tool "$CHUNKERS_JSON"
+validate_chunker_metadata < "$CHUNKERS_JSON"
+read -r -a CHUNKERS <<< "$(chunker_ids_for_text_ingest < "$CHUNKERS_JSON")"
+echo "Text ingestion chunkers from registry: ${CHUNKERS[*]}"
+
 info "Auth: register, login, me, update"
 api POST /auth/register "{\"email\":\"$TEST_EMAIL\",\"password\":\"$TEST_PASSWORD\"}" | python3 -m json.tool
 login
@@ -161,7 +262,6 @@ api PATCH "/projects/$PROJECT_ID" '{"name":"Smoke Test Project Renamed"}' | pyth
 
 TEST_FILE="$(ensure_test_file)"
 echo "Using test PDF: $TEST_FILE"
-CHUNKERS=("fixed_size" "paragraph" "sentence" "semantic" "hierarchical" "late_chunking" "proposition")
 
 info "File ingestion: all chunkers"
 for CHUNKER in "${CHUNKERS[@]}"; do
@@ -170,6 +270,10 @@ for CHUNKER in "${CHUNKERS[@]}"; do
   DOC_IDS+=("$DOC_ID")
   echo "Document ID: $DOC_ID"
 done
+
+info "Invalid chunker validation"
+expect_upload_error 400 "$TEST_FILE" "$PROJECT_ID" "xyz" | python3 -m json.tool
+expect_upload_error 400 "$TEST_FILE" "$PROJECT_ID" "multimodal" | python3 -m json.tool
 
 info "Documents: list and get"
 api GET "/documents/?project_id=$PROJECT_ID" | python3 -m json.tool
