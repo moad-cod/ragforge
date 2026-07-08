@@ -9,6 +9,7 @@ from app.models.tables import User, Project, Document
 from app.core.auth import get_current_user
 from datetime import datetime, timedelta
 from pydantic import BaseModel
+from pydantic import field_validator
 import uuid
 import bcrypt
 
@@ -30,9 +31,41 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
 
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if "@" not in normalized or "." not in normalized.rsplit("@", 1)[-1]:
+            raise ValueError("Invalid email address")
+        return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        if len(value) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return value
+
 class UpdateMeRequest(BaseModel):
     email: str | None = None
     password: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_optional_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip().lower()
+        if "@" not in normalized or "." not in normalized.rsplit("@", 1)[-1]:
+            raise ValueError("Invalid email address")
+        return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_optional_password(cls, value: str | None) -> str | None:
+        if value is not None and len(value) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return value
 
 
 # ── Register ──────────────────────────────────────────────────────────────────
@@ -103,7 +136,9 @@ async def update_me(
 
     if body.email:
         # check email not taken by another user
-        existing = await db.execute(select(User).where(User.email == body.email))
+        existing = await db.execute(
+            select(User).where(User.email == body.email, User.id != user["user_id"])
+        )
         if existing.scalar_one_or_none():
             raise HTTPException(400, "Email already in use")
         u.email = body.email

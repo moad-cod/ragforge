@@ -94,8 +94,19 @@ SECRET_KEY=your-random-secret-key-here
 QDRANT_URL=http://localhost:6333
 QDRANT_API_KEY=
 
-GEMINI_API_KEY=your_gemini_key
-GROQ_API_KEY=your_groq_key
+GEMINI_API_KEY=
+GROQ_API_KEY=
+
+# Required only for multimodal PDF ingestion
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET_NAME=
+R2_PUBLIC_URL=
+
+DEBUG_RETURN_CONTEXT=false
+MAX_UPLOAD_BYTES=26214400
+MAX_MULTIMODAL_PAGES=50
 ```
 
 Generate a secret key:
@@ -115,6 +126,8 @@ psql -U postgres -c "CREATE DATABASE ragforge OWNER ragforge;"
 ```bash
 python create_tables.py
 ```
+
+This command only creates missing tables. For a local destructive reset, run `python reset_dev_db.py`.
 
 ### 6. Run
 

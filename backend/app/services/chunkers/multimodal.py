@@ -28,8 +28,10 @@ def _get_model():
 
 # ── render PDF pages ──────────────────────────────────────────────────────────
 
-def render_pdf_pages(file_bytes: bytes, dpi: int = 150) -> list[Image.Image]:
+def render_pdf_pages(file_bytes: bytes, dpi: int = 150, max_pages: int | None = None) -> list[Image.Image]:
     doc = fitz.open(stream=file_bytes, filetype="pdf")
+    if max_pages is not None and len(doc) > max_pages:
+        raise ValueError(f"PDF has too many pages. Max is {max_pages}")
     pages = []
     for page in doc:
         mat = fitz.Matrix(dpi / 72, dpi / 72)
@@ -79,8 +81,9 @@ def embed_query_tokens(query: str) -> list[list[float]]:
 def ingest_pdf_multimodal(
     file_bytes: bytes,
     document_id: str,
+    max_pages: int | None = None,
 ) -> tuple[list[list[list[float]]], list[str], int]:
-    pages = render_pdf_pages(file_bytes)
+    pages = render_pdf_pages(file_bytes, max_pages=max_pages)
     page_embeddings = embed_pages(pages)   # ← model loads here, first call only
 
     page_image_urls = []

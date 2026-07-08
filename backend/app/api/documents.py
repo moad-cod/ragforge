@@ -4,6 +4,7 @@ from sqlalchemy import select
 from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.models.tables import Document, Project
+import asyncio
 
 router = APIRouter()
 
@@ -90,7 +91,14 @@ async def delete_document(
 
     # delete from Qdrant first
     from app.services.indexer import delete_document_chunks
-    delete_document_chunks(document_id=doc.id, collection=doc.collection)
+    await asyncio.to_thread(delete_document_chunks, document_id=doc.id, collection=doc.collection)
+
+    if doc.source == "multimodal":
+        from app.services.storage import delete_document_images
+        try:
+            await asyncio.to_thread(delete_document_images, doc.id)
+        except Exception:
+            pass
 
     # delete from postgres
     await db.delete(doc)

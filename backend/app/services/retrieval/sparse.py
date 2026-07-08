@@ -1,11 +1,19 @@
 from fastembed import SparseTextEmbedding
 from qdrant_client.models import SparseVector
 
-# Local BM25 sparse encoder — no API key, same philosophy as embedder.py
-_sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
+_sparse_model = None
+
+
+def _get_sparse_model() -> SparseTextEmbedding:
+    global _sparse_model
+    if _sparse_model is None:
+        _sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
+    return _sparse_model
 
 def embed_sparse(texts: list[str]) -> list[SparseVector]:
-    embeddings = list(_sparse_model.embed(texts))
+    if not texts:
+        return []
+    embeddings = list(_get_sparse_model().embed(texts))
     return [
         SparseVector(indices=e.indices.tolist(), values=e.values.tolist())
         for e in embeddings

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey
+from sqlalchemy import Column, String, DateTime, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from app.core.db import Base
 from datetime import datetime
@@ -24,6 +24,11 @@ class Project(Base):
     user      = relationship("User", back_populates="projects")
     documents = relationship("Document", back_populates="project", cascade="all, delete-orphan")
 
+    __table_args__ = (
+        Index("ix_projects_user_id", "user_id"),
+        Index("ix_projects_collection", "collection"),
+    )
+
 class Document(Base):
     __tablename__ = "documents"
     id         = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -35,3 +40,8 @@ class Document(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship("Project", back_populates="documents")
+
+    __table_args__ = (
+        Index("ix_documents_project_id", "project_id"),
+        Index("ix_documents_collection", "collection"),
+    )

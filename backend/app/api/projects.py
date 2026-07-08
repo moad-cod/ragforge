@@ -5,16 +5,32 @@ from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.models.tables import Project, Document
 from app.services.indexer import delete_document_chunks, delete_collection
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import uuid
+import asyncio
 
 router = APIRouter()
 
 class ProjectCreate(BaseModel):
     name: str
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("Project name is required")
+        if len(name) > 120:
+            raise ValueError("Project name must be 120 characters or fewer")
+        return name
+
 class ProjectUpdate(BaseModel):
     name: str
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return ProjectCreate.validate_name(value)
 
 
 @router.post("/")
@@ -23,9 +39,10 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    collection = body.name.strip().lower().replace(" ", "_")
+    project_id = str(uuid.uuid4())
+    collection = f"project_{project_id.replace('-', '_')}"
     project = Project(
-        id=str(uuid.uuid4()),
+        id=project_id,
         user_id=user["user_id"],
         name=body.name,
         collection=collection,
@@ -105,9 +122,16 @@ async def delete_project(
     )
     docs = docs_result.scalars().all()
     for doc in docs:
-        delete_document_chunks(document_id=doc.id, collection=project.collection)
+        await asyncio.to_thread(delete_document_chunks, document_id=doc.id, collection=doc.collection)
+        if doc.source == "multimodal":
+            from app.services.storage import delete_document_images
+            try:
+                await asyncio.to_thread(delete_document_images, doc.id)
+            except Exception:
+                pass
 
-    delete_collection(project.collection)
+    await asyncio.to_thread(delete_collection, project.collection)
+    await asyncio.to_thread(delete_collection, f"{project.collection}_multimodal")
 
     await db.delete(project)
     await db.commit()

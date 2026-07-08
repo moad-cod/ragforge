@@ -5,7 +5,7 @@ from sqlalchemy import select
 from typing import Literal
 from app.core.auth import get_current_user
 from app.core.db import get_db
-from app.models.tables import Project
+from app.models.tables import Project, Document
 from app.services.embedder import embed_query
 from app.services.retriever import search
 from app.core.config import settings
@@ -13,6 +13,7 @@ from app.services.chunkers.multimodal import embed_query_tokens  # ← fixed typ
 from openai import OpenAI
 from qdrant_client import QdrantClient                           # ← added
 from qdrant_client.models import Filter, FieldCondition, MatchValue  # ← added
+import asyncio
 
 router = APIRouter()
 
@@ -35,6 +36,10 @@ LLM_CONFIGS = {
 }
 
 def get_llm_client(provider: str) -> tuple[OpenAI, str]:
+    try:
+        settings.require_llm_provider(provider)
+    except ValueError as exc:
+        raise HTTPException(503, str(exc))
     config = LLM_CONFIGS[provider]
     return OpenAI(api_key=config["api_key"](), base_url=config["base_url"]), config["default_model"]
 
@@ -46,6 +51,7 @@ class QueryRequest(BaseModel):
     model: str | None = None
     document_id: str | None = None
     use_parent_context: bool = False
+    include_context: bool = False
 
 
 @router.post("/query")
@@ -64,9 +70,20 @@ async def query(
     if not project:
         raise HTTPException(403, "Project not found or access denied")
 
-    query_embedding = embed_query(request.question)
+    if request.document_id:
+        doc_result = await db.execute(
+            select(Document).where(
+                Document.id == request.document_id,
+                Document.project_id == request.project_id,
+            )
+        )
+        if not doc_result.scalar_one_or_none():
+            raise HTTPException(404, "Document not found in this project")
 
-    contexts = search(
+    query_embedding = await asyncio.to_thread(embed_query, request.question)
+
+    contexts = await asyncio.to_thread(
+        search,
         embedding=query_embedding,
         project_id=request.project_id,
         collection=project.collection,
@@ -81,7 +98,7 @@ async def query(
             "project_id": request.project_id,
             "collection": project.collection,
             "answer": "No documents found for this project.",
-            "retrieved_chunks": [],
+            **({"retrieved_chunks": []} if request.include_context or settings.DEBUG_RETURN_CONTEXT else {}),
         }
 
     context_text = "\n\n---\n\n".join(contexts)
@@ -96,7 +113,8 @@ Question: {request.question}"""
     client, default_model = get_llm_client(request.provider)
     model = (request.model or "").strip() or default_model
 
-    response = client.chat.completions.create(
+    response = await asyncio.to_thread(
+        client.chat.completions.create,
         model=model,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=2048,
@@ -110,7 +128,7 @@ Question: {request.question}"""
         "model": model,
         "use_parent_context": request.use_parent_context,
         "answer": response.choices[0].message.content,
-        "retrieved_chunks": contexts,
+        **({"retrieved_chunks": contexts} if request.include_context or settings.DEBUG_RETURN_CONTEXT else {}),
     }
 
 
@@ -130,10 +148,11 @@ async def multimodal_query(
     if not project:
         raise HTTPException(403, "Project not found or access denied")
 
-    query_vectors = embed_query_tokens(request.question)
+    query_vectors = await asyncio.to_thread(embed_query_tokens, request.question)
     collection = f"{project.collection}_multimodal"
 
-    results = qdrant.query_points(
+    results = await asyncio.to_thread(
+        qdrant.query_points,
         collection_name=collection,
         query=query_vectors,
         query_filter=Filter(must=[
@@ -153,7 +172,8 @@ async def multimodal_query(
     ]
 
     client, _ = get_llm_client("gemini")
-    response = client.chat.completions.create(
+    response = await asyncio.to_thread(
+        client.chat.completions.create,
         model="gemini-2.5-flash",
         messages=[{"role": "user", "content": messages}],
         max_tokens=2048,

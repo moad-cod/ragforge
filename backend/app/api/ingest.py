@@ -12,6 +12,9 @@ from app.services.chunkers.registry import ChunkerType, get_chunker
 from app.services.chunkers import late_chunking as late_chunking_module
 from app.services.chunkers import hierarchical as hierarchical_module
 from app.services.chunkers.multimodal import ingest_pdf_multimodal
+from app.core.config import settings
+from app.services.storage import delete_document_images
+import asyncio
 import uuid
 
 router = APIRouter()
@@ -26,6 +29,8 @@ SUPPORTED_MIME_TYPES = {
     "text/plain",
     "text/markdown",
 }
+
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".html", ".htm", ".md", ".txt"}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -44,6 +49,8 @@ def _build_chunks(raw_text: list[str], chunker_type: ChunkerType) -> list[str]:
     return chunker("\n\n".join(raw_text))
 
 def _index(chunks: list[str], project_id: str, document_id: str, collection: str):
+    if not chunks:
+        raise HTTPException(400, "No indexable text was extracted from the document")
     embeddings = embed_texts(chunks)
     index_chunks(
         chunks=chunks,
@@ -107,6 +114,50 @@ async def _save_document(
     db.add(doc)
     await db.commit()
 
+def _extension(filename: str | None) -> str:
+    if not filename or "." not in filename:
+        return ""
+    return "." + filename.rsplit(".", 1)[-1].lower()
+
+async def _read_upload(file: UploadFile) -> bytes:
+    data = await file.read()
+    if len(data) > settings.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"File is too large. Max size is {settings.MAX_UPLOAD_BYTES} bytes")
+    return data
+
+def _validate_file(file: UploadFile):
+    ext = _extension(file.filename)
+    if ext not in SUPPORTED_EXTENSIONS and file.content_type not in SUPPORTED_MIME_TYPES:
+        raise HTTPException(400, f"Unsupported file type: {file.content_type or ext or 'unknown'}")
+
+def _ingest_text_document(
+    file_bytes: bytes,
+    filename: str,
+    chunker: ChunkerType,
+    project_id: str,
+    document_id: str,
+    collection: str,
+) -> list[str]:
+    raw_text = parse_document(file_bytes, filename)
+    return _process_and_index(raw_text, chunker, project_id, document_id, collection)
+
+async def _cleanup_document_artifacts(document_id: str, collection: str, source: str):
+    from app.services.indexer import delete_document_chunks
+    try:
+        await asyncio.to_thread(delete_document_chunks, document_id=document_id, collection=collection)
+    except Exception:
+        pass
+    if source == "multimodal":
+        try:
+            await asyncio.to_thread(delete_document_images, document_id)
+        except Exception:
+            pass
+
+def _debug_payload(chunks: list[str]) -> dict:
+    if not settings.DEBUG_RETURN_CONTEXT:
+        return {}
+    return {"sample_chunks": chunks[:3]}
+
 
 # ── 1. File upload ────────────────────────────────────────────────────────────
 @router.post("/multimodal")
@@ -118,30 +169,40 @@ async def upload_multimodal(
 ):
     if file.content_type != "application/pdf":
         raise HTTPException(400, "Multimodal ingestion only supports PDF files")
+    try:
+        settings.require_r2()
+    except ValueError as exc:
+        raise HTTPException(503, str(exc))
 
     project = await _get_project(project_id, user["user_id"], db)
     document_id = str(uuid.uuid4())
-    file_bytes = await file.read()
+    file_bytes = await _read_upload(file)
 
-    # render + embed + upload to R2
-    page_embeddings, page_image_urls, num_pages = ingest_pdf_multimodal(
-        file_bytes, document_id
-    )
+    try:
+        page_embeddings, page_image_urls, num_pages = await asyncio.to_thread(
+            ingest_pdf_multimodal, file_bytes, document_id, settings.MAX_MULTIMODAL_PAGES
+        )
 
-    # store in Qdrant with MaxSim multi-vector collection
-    collection = f"{project.collection}_multimodal"
-    index_multimodal_pages(
-        page_embeddings=page_embeddings,
-        page_image_urls=page_image_urls,
-        project_id=project_id,
-        document_id=document_id,
-        collection=collection,
-    )
+        collection = f"{project.collection}_multimodal"
+        await asyncio.to_thread(
+            index_multimodal_pages,
+            page_embeddings=page_embeddings,
+            page_image_urls=page_image_urls,
+            project_id=project_id,
+            document_id=document_id,
+            collection=collection,
+        )
 
-    await _save_document(
-        db, document_id, project_id,
-        collection, file.filename, "multimodal", num_pages
-    )
+        await _save_document(
+            db, document_id, project_id,
+            collection, file.filename, "multimodal", num_pages
+        )
+    except ValueError as exc:
+        await _cleanup_document_artifacts(document_id, f"{project.collection}_multimodal", "multimodal")
+        raise HTTPException(413, str(exc))
+    except Exception:
+        await _cleanup_document_artifacts(document_id, f"{project.collection}_multimodal", "multimodal")
+        raise
 
     return {
         "document_id": document_id,
@@ -160,20 +221,28 @@ async def upload_file(
     user: dict = Depends(get_current_user),
 ):
     project = await _get_project(project_id, user["user_id"], db)
-
-    if file.content_type not in SUPPORTED_MIME_TYPES:
-        raise HTTPException(400, f"Unsupported file type: {file.content_type}")
+    _validate_file(file)
 
     document_id = str(uuid.uuid4())
-    file_bytes = await file.read()
-    raw_text = parse_document(file_bytes, file.filename)
+    file_bytes = await _read_upload(file)
 
-    chunks = _process_and_index(raw_text, chunker, project_id, document_id, project.collection)
-
-    await _save_document(
-        db, document_id, project_id,
-        project.collection, file.filename, "file", len(chunks)
-    )
+    try:
+        chunks = await asyncio.to_thread(
+            _ingest_text_document,
+            file_bytes,
+            file.filename,
+            chunker,
+            project_id,
+            document_id,
+            project.collection,
+        )
+        await _save_document(
+            db, document_id, project_id,
+            project.collection, file.filename, "file", len(chunks)
+        )
+    except Exception:
+        await _cleanup_document_artifacts(document_id, project.collection, "file")
+        raise
 
     return {
         "document_id": document_id,
@@ -182,7 +251,7 @@ async def upload_file(
         "filename": file.filename,
         "chunker": chunker.value,
         "chunks_indexed": len(chunks),
-        "sample_chunks": chunks[:3],
+        **_debug_payload(chunks),
     }
 
 
@@ -203,12 +272,22 @@ async def upload_url(
     document_id = str(uuid.uuid4())
     raw_text = await parse_url(payload.url)
 
-    chunks = _process_and_index(raw_text, payload.chunker, payload.project_id, document_id, project.collection)
-
-    await _save_document(
-        db, document_id, payload.project_id,
-        project.collection, payload.url, "url", len(chunks)
-    )
+    try:
+        chunks = await asyncio.to_thread(
+            _process_and_index,
+            raw_text,
+            payload.chunker,
+            payload.project_id,
+            document_id,
+            project.collection,
+        )
+        await _save_document(
+            db, document_id, payload.project_id,
+            project.collection, payload.url, "url", len(chunks)
+        )
+    except Exception:
+        await _cleanup_document_artifacts(document_id, project.collection, "url")
+        raise
 
     return {
         "document_id": document_id,
@@ -217,7 +296,7 @@ async def upload_url(
         "url": payload.url,
         "chunker": payload.chunker.value,
         "chunks_indexed": len(chunks),
-        "sample_chunks": chunks[:3],
+        **_debug_payload(chunks),
     }
 
 
@@ -239,12 +318,22 @@ async def upload_gdrive(
     document_id = str(uuid.uuid4())
     raw_text = await parse_gdrive(payload.file_id, payload.access_token)
 
-    chunks = _process_and_index(raw_text, payload.chunker, payload.project_id, document_id, project.collection)
-
-    await _save_document(
-        db, document_id, payload.project_id,
-        project.collection, payload.file_id, "gdrive", len(chunks)
-    )
+    try:
+        chunks = await asyncio.to_thread(
+            _process_and_index,
+            raw_text,
+            payload.chunker,
+            payload.project_id,
+            document_id,
+            project.collection,
+        )
+        await _save_document(
+            db, document_id, payload.project_id,
+            project.collection, payload.file_id, "gdrive", len(chunks)
+        )
+    except Exception:
+        await _cleanup_document_artifacts(document_id, project.collection, "gdrive")
+        raise
 
     return {
         "document_id": document_id,
@@ -253,5 +342,5 @@ async def upload_gdrive(
         "file_id": payload.file_id,
         "chunker": payload.chunker.value,
         "chunks_indexed": len(chunks),
-        "sample_chunks": chunks[:3],
+        **_debug_payload(chunks),
     }

@@ -1,5 +1,5 @@
-import nltk
 from dataclasses import dataclass
+from app.services.chunkers.tokenize import split_sentences
 
 @dataclass
 class HierarchicalChunk:
@@ -28,7 +28,7 @@ def chunk_hierarchical(
     """
     import uuid
 
-    sentences = [s.strip() for s in nltk.sent_tokenize(text) if len(s.strip()) > 20]
+    sentences = [s.strip() for s in split_sentences(text) if len(s.strip()) > 20]
     if not sentences:
         return []
 

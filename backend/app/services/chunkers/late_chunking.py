@@ -1,8 +1,6 @@
-import nltk
 import numpy as np
-from sentence_transformers import SentenceTransformer
-
-model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+from app.services.embedder import embed_texts
+from app.services.chunkers.tokenize import split_sentences
 
 def chunk(text: str, chunk_size: int = 5, min_chunk_len: int = 50) -> list[str]:
     """
@@ -12,13 +10,13 @@ def chunk(text: str, chunk_size: int = 5, min_chunk_len: int = 50) -> list[str]:
     chunk_size: number of sentences per chunk
     """
     # 1. split into sentences
-    sentences = [s.strip() for s in nltk.sent_tokenize(text) if len(s.strip()) > 20]
+    sentences = [s.strip() for s in split_sentences(text) if len(s.strip()) > 20]
     if not sentences:
         return []
 
     # 2. embed ALL sentences together (full document context)
     # this is the key difference — context from the whole doc flows into each embedding
-    embeddings = model.encode(sentences, normalize_embeddings=True)
+    embeddings = np.array(embed_texts(sentences))
 
     # 3. group sentences into chunks of chunk_size
     # the embeddings already have full context baked in
@@ -37,12 +35,12 @@ def chunk_with_embeddings(text: str, chunk_size: int = 5) -> tuple[list[str], li
     Returns both chunks AND their context-aware embeddings.
     Use this in indexer for true late chunking — skip re-embedding later.
     """
-    sentences = [s.strip() for s in nltk.sent_tokenize(text) if len(s.strip()) > 20]
+    sentences = [s.strip() for s in split_sentences(text) if len(s.strip()) > 20]
     if not sentences:
         return [], []
 
     # embed full document at once
-    all_embeddings = model.encode(sentences, normalize_embeddings=True)
+    all_embeddings = np.array(embed_texts(sentences))
 
     chunks = []
     chunk_embeddings = []
