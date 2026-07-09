@@ -55,16 +55,13 @@ services:
     container_name: ragforge_minio_init
     depends_on:
       - minio
-    entrypoint:
-      - /bin/sh
-      - -c
-    command: >
-      until mc alias set local http://minio:9000 ragforge ragforge123; do sleep 2; done;
-      mc mb -p local/bronze || true;
-      mc mb -p local/silver || true;
-      mc mb -p local/gold || true;
-      echo 'MinIO buckets created: bronze, silver, gold'
-      
+    entrypoint: ["/bin/sh", "/init/init_minio.sh"]
+    environment:
+      MINIO_ROOT_USER: ragforge
+      MINIO_ROOT_PASSWORD: ragforge123
+    volumes:
+      - ./scripts/init_minio.sh:/init/init_minio.sh:ro
+    restart: "no"
 
   redis:
     image: redis:7-alpine
