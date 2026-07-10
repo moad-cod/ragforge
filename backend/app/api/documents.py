@@ -1,12 +1,44 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.models.tables import Document, Project
+from datetime import datetime
 import asyncio
 
 router = APIRouter()
+
+
+class DocumentResponse(BaseModel):
+    document_id: str
+    project_id: str
+    current_version_id: str | None
+    filename: str | None
+    source_type: str | None
+    mime_type: str | None
+    extension: str | None
+    status: str
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+def _document_payload(document: Document) -> DocumentResponse:
+    return DocumentResponse(
+        document_id=document.id,
+        project_id=document.project_id,
+        current_version_id=document.current_version_id,
+        filename=document.filename,
+        source_type=document.source_type,
+        mime_type=document.mime_type,
+        extension=document.extension,
+        status=document.status,
+        created_by=document.created_by,
+        created_at=document.created_at,
+        updated_at=document.updated_at,
+    )
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -31,6 +63,7 @@ async def _get_document(document_id: str, user_id: str, db: AsyncSession) -> Doc
         .join(Project, Document.project_id == Project.id)
         .where(
             Document.id == document_id,
+            Document.deleted_at.is_(None),
             Project.created_by == user_id,
             Project.deleted_at.is_(None),
         )
@@ -43,7 +76,7 @@ async def _get_document(document_id: str, user_id: str, db: AsyncSession) -> Doc
 
 # ── LIST documents in a project ───────────────────────────────────────────────
 
-@router.get("/")
+@router.get("/", response_model=list[DocumentResponse])
 async def list_documents(
     project_id: str,
     db: AsyncSession = Depends(get_db),
@@ -52,39 +85,25 @@ async def list_documents(
     await _get_project(project_id, user["user_id"], db)  # verify ownership
 
     result = await db.execute(
-        select(Document).where(Document.project_id == project_id)
+        select(Document).where(
+            Document.project_id == project_id,
+            Document.deleted_at.is_(None),
+        )
     )
     docs = result.scalars().all()
-    return [
-        {
-            "document_id": d.id,
-            "project_id": d.project_id,
-            "filename": d.filename,
-            "source": d.source,
-            "chunks": d.chunks,
-            "created_at": d.created_at,
-        }
-        for d in docs
-    ]
+    return [_document_payload(d) for d in docs]
 
 
 # ── GET single document ───────────────────────────────────────────────────────
 
-@router.get("/{document_id}")
+@router.get("/{document_id}", response_model=DocumentResponse)
 async def get_document(
     document_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     doc = await _get_document(document_id, user["user_id"], db)
-    return {
-        "document_id": doc.id,
-        "project_id": doc.project_id,
-        "filename": doc.filename,
-        "source": doc.source,
-        "chunks": doc.chunks,
-        "created_at": doc.created_at,
-    }
+    return _document_payload(doc)
 
 
 # ── DELETE document ───────────────────────────────────────────────────────────
@@ -99,17 +118,18 @@ async def delete_document(
 
     # delete from Qdrant first
     from app.services.indexer import delete_document_chunks
-    await asyncio.to_thread(delete_document_chunks, document_id=doc.id, collection=doc.collection)
+    project = await _get_project(doc.project_id, user["user_id"], db)
+    await asyncio.to_thread(delete_document_chunks, document_id=doc.id, collection=project.collection)
 
-    if doc.source == "multimodal":
+    if doc.source_type == "multimodal":
         from app.services.storage import delete_document_images
         try:
             await asyncio.to_thread(delete_document_images, doc.id)
         except Exception:
             pass
 
-    # delete from postgres
-    await db.delete(doc)
+    doc.status = "deleted"
+    doc.deleted_at = datetime.utcnow()
     await db.commit()
 
     return {"deleted": document_id}

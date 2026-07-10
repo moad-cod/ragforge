@@ -75,6 +75,7 @@ async def query(
             select(Document).where(
                 Document.id == request.document_id,
                 Document.project_id == request.project_id,
+                Document.deleted_at.is_(None),
             )
         )
         if not doc_result.scalar_one_or_none():

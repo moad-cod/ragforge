@@ -106,18 +106,22 @@ async def _save_document(
     db: AsyncSession,
     document_id: str,
     project_id: str,
-    collection: str,
     filename: str,
-    source: str,
-    chunks_count: int,
+    source_type: str,
+    created_by: str,
+    mime_type: str | None = None,
+    extension: str | None = None,
+    status: str = "indexed",
 ):
     doc = Document(
         id=document_id,
         project_id=project_id,
-        collection=collection,
         filename=filename,
-        source=source,
-        chunks=str(chunks_count),
+        source_type=source_type,
+        mime_type=mime_type,
+        extension=extension,
+        status=status,
+        created_by=created_by,
     )
     db.add(doc)
     await db.commit()
@@ -214,8 +218,14 @@ async def upload_multimodal(
         )
 
         await _save_document(
-            db, document_id, project_id,
-            collection, file.filename, "multimodal", num_pages
+            db=db,
+            document_id=document_id,
+            project_id=project_id,
+            filename=file.filename,
+            source_type="multimodal",
+            created_by=user["user_id"],
+            mime_type=file.content_type,
+            extension=_extension(file.filename),
         )
     except ValueError as exc:
         await _cleanup_document_artifacts(document_id, f"{project.collection}_multimodal", "multimodal")
@@ -229,6 +239,10 @@ async def upload_multimodal(
         "project_id": project_id,
         "collection": collection,
         "filename": file.filename,
+        "source_type": "multimodal",
+        "mime_type": file.content_type,
+        "extension": _extension(file.filename),
+        "status": "indexed",
         "pages_indexed": num_pages,
         "page_image_urls": page_image_urls,
     }
@@ -258,8 +272,14 @@ async def upload_file(
             project.collection,
         )
         await _save_document(
-            db, document_id, project_id,
-            project.collection, file.filename, "file", len(chunks)
+            db=db,
+            document_id=document_id,
+            project_id=project_id,
+            filename=file.filename,
+            source_type="file",
+            created_by=user["user_id"],
+            mime_type=file.content_type,
+            extension=_extension(file.filename),
         )
     except Exception:
         await _cleanup_document_artifacts(document_id, project.collection, "file")
@@ -270,6 +290,10 @@ async def upload_file(
         "project_id": project_id,
         "collection": project.collection,
         "filename": file.filename,
+        "source_type": "file",
+        "mime_type": file.content_type,
+        "extension": _extension(file.filename),
+        "status": "indexed",
         "chunker": chunker,
         "chunks_indexed": len(chunks),
         **_debug_payload(chunks),
@@ -304,8 +328,12 @@ async def upload_url(
             project.collection,
         )
         await _save_document(
-            db, document_id, payload.project_id,
-            project.collection, payload.url, "url", len(chunks)
+            db=db,
+            document_id=document_id,
+            project_id=payload.project_id,
+            filename=payload.url,
+            source_type="url",
+            created_by=user["user_id"],
         )
     except Exception:
         await _cleanup_document_artifacts(document_id, project.collection, "url")
@@ -316,6 +344,8 @@ async def upload_url(
         "project_id": payload.project_id,
         "collection": project.collection,
         "url": payload.url,
+        "source_type": "url",
+        "status": "indexed",
         "chunker": chunker,
         "chunks_indexed": len(chunks),
         **_debug_payload(chunks),
@@ -351,8 +381,12 @@ async def upload_gdrive(
             project.collection,
         )
         await _save_document(
-            db, document_id, payload.project_id,
-            project.collection, payload.file_id, "gdrive", len(chunks)
+            db=db,
+            document_id=document_id,
+            project_id=payload.project_id,
+            filename=payload.file_id,
+            source_type="gdrive",
+            created_by=user["user_id"],
         )
     except Exception:
         await _cleanup_document_artifacts(document_id, project.collection, "gdrive")
@@ -363,6 +397,8 @@ async def upload_gdrive(
         "project_id": payload.project_id,
         "collection": project.collection,
         "file_id": payload.file_id,
+        "source_type": "gdrive",
+        "status": "indexed",
         "chunker": chunker,
         "chunks_indexed": len(chunks),
         **_debug_payload(chunks),

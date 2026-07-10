@@ -168,17 +168,22 @@ async def delete_project(
         raise HTTPException(404, "Project not found")
 
     docs_result = await db.execute(
-        select(Document).where(Document.project_id == project_id)
+        select(Document).where(
+            Document.project_id == project_id,
+            Document.deleted_at.is_(None),
+        )
     )
     docs = docs_result.scalars().all()
     for doc in docs:
-        await asyncio.to_thread(delete_document_chunks, document_id=doc.id, collection=doc.collection)
-        if doc.source == "multimodal":
+        await asyncio.to_thread(delete_document_chunks, document_id=doc.id, collection=project.collection)
+        if doc.source_type == "multimodal":
             from app.services.storage import delete_document_images
             try:
                 await asyncio.to_thread(delete_document_images, doc.id)
             except Exception:
                 pass
+        doc.status = "deleted"
+        doc.deleted_at = datetime.utcnow()
 
     await asyncio.to_thread(delete_collection, project.collection)
     await asyncio.to_thread(delete_collection, f"{project.collection}_multimodal")
