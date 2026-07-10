@@ -3,9 +3,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.auth import get_current_user
 from app.core.db import get_db
-from app.models.tables import Project, Document
+from app.models.tables import Project, Document, Organization
 from app.services.indexer import delete_document_chunks, delete_collection
 from pydantic import BaseModel, field_validator
+from datetime import datetime
 import uuid
 import asyncio
 
@@ -13,6 +14,7 @@ router = APIRouter()
 
 class ProjectCreate(BaseModel):
     name: str
+    organization_id: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -32,57 +34,96 @@ class ProjectUpdate(BaseModel):
     def validate_name(cls, value: str) -> str:
         return ProjectCreate.validate_name(value)
 
+class ProjectResponse(BaseModel):
+    project_id: str
+    organization_id: str | None
+    name: str
+    collection: str
+    qdrant_collection: str
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
 
-@router.post("/")
+
+def _project_payload(project: Project) -> ProjectResponse:
+    return ProjectResponse(
+        project_id=project.id,
+        organization_id=project.organization_id,
+        name=project.name,
+        collection=project.collection,
+        qdrant_collection=project.qdrant_collection,
+        created_by=project.created_by,
+        created_at=project.created_at,
+        updated_at=project.updated_at,
+    )
+
+
+@router.post("/", response_model=ProjectResponse)
 async def create_project(
     body: ProjectCreate,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
+    if body.organization_id:
+        org_result = await db.execute(
+            select(Organization).where(
+                Organization.id == body.organization_id,
+                Organization.deleted_at.is_(None),
+            )
+        )
+        if not org_result.scalar_one_or_none():
+            raise HTTPException(400, "Organization not found")
+
     project_id = str(uuid.uuid4())
-    collection = f"project_{project_id.replace('-', '_')}"
+    collection = f"project_{project_id}"
     project = Project(
         id=project_id,
-        user_id=user["user_id"],
+        organization_id=body.organization_id,
+        created_by=user["user_id"],
         name=body.name,
-        collection=collection,
+        qdrant_collection=collection,
     )
     db.add(project)
     await db.commit()
-    return {"project_id": project.id, "name": project.name, "collection": collection}
+    await db.refresh(project)
+    return _project_payload(project)
 
 
-@router.get("/")
+@router.get("/", response_model=list[ProjectResponse])
 async def list_projects(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     result = await db.execute(
-        select(Project).where(Project.user_id == user["user_id"])
+        select(Project).where(
+            Project.created_by == user["user_id"],
+            Project.deleted_at.is_(None),
+        )
     )
     projects = result.scalars().all()
-    return [
-        {"project_id": p.id, "name": p.name, "collection": p.collection, "created_at": p.created_at}
-        for p in projects
-    ]
+    return [_project_payload(p) for p in projects]
 
 
-@router.get("/{project_id}")
+@router.get("/{project_id}", response_model=ProjectResponse)
 async def get_project(
     project_id: str,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     result = await db.execute(
-        select(Project).where(Project.id == project_id, Project.user_id == user["user_id"])
+        select(Project).where(
+            Project.id == project_id,
+            Project.created_by == user["user_id"],
+            Project.deleted_at.is_(None),
+        )
     )
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(404, "Project not found")
-    return {"project_id": project.id, "name": project.name, "collection": project.collection, "created_at": project.created_at}
+    return _project_payload(project)
 
 
-@router.patch("/{project_id}")
+@router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(
     project_id: str,
     body: ProjectUpdate,
@@ -90,7 +131,11 @@ async def update_project(
     user: dict = Depends(get_current_user),
 ):
     result = await db.execute(
-        select(Project).where(Project.id == project_id, Project.user_id == user["user_id"])
+        select(Project).where(
+            Project.id == project_id,
+            Project.created_by == user["user_id"],
+            Project.deleted_at.is_(None),
+        )
     )
     project = result.scalar_one_or_none()
     if not project:
@@ -100,8 +145,9 @@ async def update_project(
     # changing collection would require re-indexing all documents
     project.name = body.name
     await db.commit()
+    await db.refresh(project)
 
-    return {"project_id": project.id, "name": project.name, "collection": project.collection}
+    return _project_payload(project)
 
 
 @router.delete("/{project_id}")
@@ -111,7 +157,11 @@ async def delete_project(
     user: dict = Depends(get_current_user),
 ):
     result = await db.execute(
-        select(Project).where(Project.id == project_id, Project.user_id == user["user_id"])
+        select(Project).where(
+            Project.id == project_id,
+            Project.created_by == user["user_id"],
+            Project.deleted_at.is_(None),
+        )
     )
     project = result.scalar_one_or_none()
     if not project:
@@ -133,7 +183,7 @@ async def delete_project(
     await asyncio.to_thread(delete_collection, project.collection)
     await asyncio.to_thread(delete_collection, f"{project.collection}_multimodal")
 
-    await db.delete(project)
+    project.deleted_at = datetime.utcnow()
     await db.commit()
 
     return {

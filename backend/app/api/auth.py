@@ -5,7 +5,7 @@ from sqlalchemy import select
 from jose import jwt
 from app.core.config import settings
 from app.core.db import get_db
-from app.models.tables import User, Project, Document
+from app.models.tables import User, Project, Document, Organization
 from app.core.auth import get_current_user
 from datetime import datetime, timedelta
 from pydantic import BaseModel
@@ -30,6 +30,8 @@ def verify_password(password: str, hashed: str) -> bool:
 class RegisterRequest(BaseModel):
     email: str
     password: str
+    full_name: str | None = None
+    organization_id: str | None = None
 
     @field_validator("email")
     @classmethod
@@ -49,6 +51,8 @@ class RegisterRequest(BaseModel):
 class UpdateMeRequest(BaseModel):
     email: str | None = None
     password: str | None = None
+    full_name: str | None = None
+    organization_id: str | None = None
 
     @field_validator("email")
     @classmethod
@@ -67,23 +71,56 @@ class UpdateMeRequest(BaseModel):
             raise ValueError("Password must be at least 8 characters")
         return value
 
+class UserResponse(BaseModel):
+    user_id: str
+    organization_id: str | None
+    email: str
+    full_name: str | None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+def _user_payload(user: User) -> UserResponse:
+    return UserResponse(
+        user_id=user.id,
+        organization_id=user.organization_id,
+        email=user.email,
+        full_name=user.full_name,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
+
 
 # ── Register ──────────────────────────────────────────────────────────────────
 
-@router.post("/register")
+@router.post("/register", response_model=UserResponse)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == body.email))
+    result = await db.execute(
+        select(User).where(User.email == body.email)
+    )
     if result.scalar_one_or_none():
         raise HTTPException(400, "Email already registered")
+    if body.organization_id:
+        org_result = await db.execute(
+            select(Organization).where(
+                Organization.id == body.organization_id,
+                Organization.deleted_at.is_(None),
+            )
+        )
+        if not org_result.scalar_one_or_none():
+            raise HTTPException(400, "Organization not found")
 
     user = User(
         id=str(uuid.uuid4()),
+        organization_id=body.organization_id,
         email=body.email,
+        full_name=body.full_name,
         hashed_password=hash_password(body.password),
     )
     db.add(user)
     await db.commit()
-    return {"user_id": user.id, "email": user.email}
+    await db.refresh(user)
+    return _user_payload(user)
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -93,7 +130,9 @@ async def login(
     form: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(User).where(User.email == form.username))
+    result = await db.execute(
+        select(User).where(User.email == form.username, User.deleted_at.is_(None))
+    )
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(form.password, user.hashed_password):
@@ -109,27 +148,31 @@ async def login(
 
 # ── Get current user ──────────────────────────────────────────────────────────
 
-@router.get("/me")
+@router.get("/me", response_model=UserResponse)
 async def get_me(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    result = await db.execute(select(User).where(User.id == user["user_id"]))
+    result = await db.execute(
+        select(User).where(User.id == user["user_id"], User.deleted_at.is_(None))
+    )
     u = result.scalar_one_or_none()
     if not u:
         raise HTTPException(404, "User not found")
-    return {"user_id": u.id, "email": u.email, "created_at": u.created_at}
+    return _user_payload(u)
 
 
 # ── Update current user ───────────────────────────────────────────────────────
 
-@router.patch("/me")
+@router.patch("/me", response_model=UserResponse)
 async def update_me(
     body: UpdateMeRequest,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    result = await db.execute(select(User).where(User.id == user["user_id"]))
+    result = await db.execute(
+        select(User).where(User.id == user["user_id"], User.deleted_at.is_(None))
+    )
     u = result.scalar_one_or_none()
     if not u:
         raise HTTPException(404, "User not found")
@@ -137,7 +180,11 @@ async def update_me(
     if body.email:
         # check email not taken by another user
         existing = await db.execute(
-            select(User).where(User.email == body.email, User.id != user["user_id"])
+            select(User).where(
+                User.email == body.email,
+                User.id != user["user_id"],
+                User.deleted_at.is_(None),
+            )
         )
         if existing.scalar_one_or_none():
             raise HTTPException(400, "Email already in use")
@@ -145,9 +192,23 @@ async def update_me(
 
     if body.password:
         u.hashed_password = hash_password(body.password)
+    if body.full_name is not None:
+        u.full_name = body.full_name
+    if body.organization_id is not None:
+        if body.organization_id:
+            org_result = await db.execute(
+                select(Organization).where(
+                    Organization.id == body.organization_id,
+                    Organization.deleted_at.is_(None),
+                )
+            )
+            if not org_result.scalar_one_or_none():
+                raise HTTPException(400, "Organization not found")
+        u.organization_id = body.organization_id or None
 
     await db.commit()
-    return {"user_id": u.id, "email": u.email}
+    await db.refresh(u)
+    return _user_payload(u)
 
 
 # ── Delete current user ───────────────────────────────────────────────────────
@@ -157,7 +218,9 @@ async def delete_me(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    result = await db.execute(select(User).where(User.id == user["user_id"]))
+    result = await db.execute(
+        select(User).where(User.id == user["user_id"], User.deleted_at.is_(None))
+    )
     u = result.scalar_one_or_none()
     if not u:
         raise HTTPException(404, "User not found")
@@ -165,14 +228,18 @@ async def delete_me(
     # delete all Qdrant collections for this user's projects
     from app.services.indexer import delete_collection
     projects_result = await db.execute(
-        select(Project).where(Project.user_id == user["user_id"])
+        select(Project).where(
+            Project.created_by == user["user_id"],
+            Project.deleted_at.is_(None),
+        )
     )
     projects = projects_result.scalars().all()
     for project in projects:
         delete_collection(project.collection)
+        delete_collection(f"{project.collection}_multimodal")
+        project.deleted_at = datetime.utcnow()
 
-    # delete user — cascades to projects → documents in postgres
-    await db.delete(u)
+    u.deleted_at = datetime.utcnow()
     await db.commit()
 
     return {

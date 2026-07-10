@@ -41,7 +41,11 @@ SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".html", ".ht
 
 async def _get_project(project_id: str, user_id: str, db: AsyncSession) -> Project:
     result = await db.execute(
-        select(Project).where(Project.id == project_id, Project.user_id == user_id)
+        select(Project).where(
+            Project.id == project_id,
+            Project.created_by == user_id,
+            Project.deleted_at.is_(None),
+        )
     )
     project = result.scalar_one_or_none()
     if not project:

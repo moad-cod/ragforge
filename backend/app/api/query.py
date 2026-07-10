@@ -62,7 +62,8 @@ async def query(
     result = await db.execute(
         select(Project).where(
             Project.id == request.project_id,
-            Project.user_id == user["user_id"],
+            Project.created_by == user["user_id"],
+            Project.deleted_at.is_(None),
         )
     )
     project = result.scalar_one_or_none()
@@ -140,7 +141,8 @@ async def multimodal_query(
     result = await db.execute(
         select(Project).where(
             Project.id == request.project_id,
-            Project.user_id == user["user_id"],
+            Project.created_by == user["user_id"],
+            Project.deleted_at.is_(None),
         )
     )
     project = result.scalar_one_or_none()

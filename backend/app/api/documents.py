@@ -13,7 +13,11 @@ router = APIRouter()
 
 async def _get_project(project_id: str, user_id: str, db: AsyncSession) -> Project:
     result = await db.execute(
-        select(Project).where(Project.id == project_id, Project.user_id == user_id)
+        select(Project).where(
+            Project.id == project_id,
+            Project.created_by == user_id,
+            Project.deleted_at.is_(None),
+        )
     )
     project = result.scalar_one_or_none()
     if not project:
@@ -25,7 +29,11 @@ async def _get_document(document_id: str, user_id: str, db: AsyncSession) -> Doc
     result = await db.execute(
         select(Document)
         .join(Project, Document.project_id == Project.id)
-        .where(Document.id == document_id, Project.user_id == user_id)
+        .where(
+            Document.id == document_id,
+            Project.created_by == user_id,
+            Project.deleted_at.is_(None),
+        )
     )
     doc = result.scalar_one_or_none()
     if not doc:
