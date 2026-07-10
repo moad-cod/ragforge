@@ -83,11 +83,14 @@ services:
   # =========================
 
   fastapi:
-    image: python:3.12-slim
+    build:
+      context: ./backend
     container_name: ragforge_fastapi
-    working_dir: /home/snow/Documents/Projects/RAGForge/backend
+    working_dir: /app
     command:
-      - /home/snow/Documents/Projects/RAGForge/backend/.venv/bin/uvicorn
+      - python
+      - -m
+      - uvicorn
       - app.main:app
       - --host
       - 0.0.0.0
@@ -110,7 +113,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/home/snow/Documents/Projects/RAGForge/backend
+      - ./backend:/app
     depends_on:
       postgres:
         condition: service_healthy
