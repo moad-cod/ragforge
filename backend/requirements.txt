@@ -1,0 +1,38 @@
+# Runtime dependencies for the FastAPI backend.
+# Keep this file focused on the default text RAG API so Docker builds stay small.
+#
+# Multimodal ColPali ingestion and CrossEncoder reranking are intentionally not
+# included here because they pull a much heavier model stack. Add those packages
+# in a separate image/profile if you need those optional paths.
+
+fastapi==0.138.1
+uvicorn[standard]==0.49.0
+python-multipart==0.0.32
+pydantic-settings==2.14.2
+
+SQLAlchemy==2.0.51
+asyncpg==0.31.0
+
+python-jose[cryptography]==3.5.0
+bcrypt==5.0.0
+
+qdrant-client==1.18.0
+fastembed==0.8.0
+numpy==1.26.4
+nltk==3.9.4
+
+openai==2.44.0
+groq==0.37.1
+
+boto3==1.43.39
+
+PyMuPDF==1.27.2.3
+pillow>=10.3,<13
+python-docx==1.2.0
+openpyxl==3.1.5
+python-pptx==1.0.2
+beautifulsoup4==4.15.0
+lxml==6.1.1
+httpx==0.28.1
+google-api-python-client==2.198.0
+google-auth==2.55.1

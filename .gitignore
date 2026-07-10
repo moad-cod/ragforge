@@ -29,6 +29,7 @@ Thumbs.db
 *.pdf
 *.docx
 *.txt
+!backend/requirements.txt
 uploads/
 documents/
 # Docker
