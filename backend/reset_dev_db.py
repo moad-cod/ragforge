@@ -1,6 +1,6 @@
 import asyncio
 from app.core.db import engine, Base
-from app.models.tables import User, Project, Document
+from app.models.tables import Organization, User, Project, Document
 from app.core.config import settings
 from qdrant_client import QdrantClient
 
