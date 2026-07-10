@@ -1,10 +1,10 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from app.core.auth import get_current_user
 from app.core.db import get_db
-from app.models.tables import Project, Document
+from app.models.tables import Project, Document, DocumentVersion
 from app.services.parser import parse_document, parse_url, parse_gdrive
 from app.services.embedder import embed_texts
 from app.services.indexer import index_chunks, index_hierarchical_chunks, index_multimodal_pages
@@ -19,6 +19,7 @@ from app.services.chunkers import hierarchical as hierarchical_module
 from app.core.config import settings
 from app.services.storage import delete_document_images
 import asyncio
+import hashlib
 import uuid
 
 router = APIRouter()
@@ -102,20 +103,74 @@ def _process_and_index(
         _index(chunks, project_id, document_id, collection)
         return chunks
 
-async def _save_document(
-    db: AsyncSession,
+EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+
+
+def _content_hash(data: bytes | str | list[str]) -> str:
+    if isinstance(data, bytes):
+        payload = data
+    elif isinstance(data, list):
+        payload = "\n\n".join(data).encode("utf-8", errors="ignore")
+    else:
+        payload = data.encode("utf-8", errors="ignore")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _object_prefix(project: Project, document_id: str, version_number: int) -> str:
+    org_id = project.organization_id or "none"
+    return f"org_id={org_id}/project_id={project.id}/document_id={document_id}/version={version_number}"
+
+
+def _version_paths(
+    project: Project,
     document_id: str,
-    project_id: str,
+    version_number: int,
+    filename: str | None,
+    source_type: str,
+) -> tuple[str | None, str | None, str | None]:
+    safe_name = (filename or source_type or "source").rsplit("/", 1)[-1] or "source"
+    prefix = _object_prefix(project, document_id, version_number)
+    bronze_path = f"bronze/{prefix}/raw/{safe_name}"
+    silver_path = f"silver/{prefix}/chunks.parquet"
+    gold_path = f"gold/{prefix}/embedded_chunks.parquet"
+    return bronze_path, silver_path, gold_path
+
+
+async def _next_version_number(db: AsyncSession, document_id: str) -> int:
+    result = await db.execute(
+        select(func.max(DocumentVersion.version_number)).where(DocumentVersion.document_id == document_id)
+    )
+    return (result.scalar_one_or_none() or 0) + 1
+
+
+async def _get_or_create_document(
+    db: AsyncSession,
+    project: Project,
     filename: str,
     source_type: str,
     created_by: str,
     mime_type: str | None = None,
     extension: str | None = None,
-    status: str = "indexed",
-):
+    status: str = "processing",
+) -> Document:
+    result = await db.execute(
+        select(Document).where(
+            Document.project_id == project.id,
+            Document.filename == filename,
+            Document.source_type == source_type,
+            Document.deleted_at.is_(None),
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if doc:
+        doc.status = status
+        doc.mime_type = mime_type or doc.mime_type
+        doc.extension = extension or doc.extension
+        return doc
+
     doc = Document(
-        id=document_id,
-        project_id=project_id,
+        id=str(uuid.uuid4()),
+        project_id=project.id,
         filename=filename,
         source_type=source_type,
         mime_type=mime_type,
@@ -124,7 +179,95 @@ async def _save_document(
         created_by=created_by,
     )
     db.add(doc)
+    await db.flush()
+    return doc
+
+
+async def _add_document_version(
+    db: AsyncSession,
+    project: Project,
+    document: Document,
+    content_hash: str,
+    source_type: str,
+    filename: str | None,
+    parser_name: str | None,
+    chunker_id: str | None,
+    status: str = "indexed",
+    error_message: str | None = None,
+) -> DocumentVersion:
+    existing = await db.execute(
+        select(DocumentVersion).where(
+            DocumentVersion.document_id == document.id,
+            DocumentVersion.content_hash == content_hash,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "This document content was already uploaded")
+
+    version_number = await _next_version_number(db, document.id)
+    bronze_path, silver_path, gold_path = _version_paths(
+        project=project,
+        document_id=document.id,
+        version_number=version_number,
+        filename=filename,
+        source_type=source_type,
+    )
+    version = DocumentVersion(
+        id=str(uuid.uuid4()),
+        document_id=document.id,
+        version_number=version_number,
+        content_hash=content_hash,
+        bronze_path=bronze_path,
+        silver_path=silver_path,
+        gold_path=gold_path,
+        parser_name=parser_name,
+        chunker_id=chunker_id,
+        embedding_model=EMBEDDING_MODEL,
+        status=status,
+        error_message=error_message,
+    )
+    db.add(version)
+    await db.flush()
+    document.current_version_id = version.id
+    document.status = status
+    return version
+
+
+async def _ensure_new_content(db: AsyncSession, document_id: str, content_hash: str) -> None:
+    existing = await db.execute(
+        select(DocumentVersion.id).where(
+            DocumentVersion.document_id == document_id,
+            DocumentVersion.content_hash == content_hash,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "This document content was already uploaded")
+
+
+async def _save_document_version(
+    db: AsyncSession,
+    project: Project,
+    document: Document,
+    filename: str,
+    source_type: str,
+    content_hash: str,
+    parser_name: str | None,
+    chunker_id: str | None,
+) -> tuple[Document, DocumentVersion]:
+    version = await _add_document_version(
+        db=db,
+        project=project,
+        document=document,
+        content_hash=content_hash,
+        source_type=source_type,
+        filename=filename,
+        parser_name=parser_name,
+        chunker_id=chunker_id,
+    )
     await db.commit()
+    await db.refresh(document)
+    await db.refresh(version)
+    return document, version
 
 def _extension(filename: str | None) -> str:
     if not filename or "." not in filename:
@@ -197,14 +340,24 @@ async def upload_multimodal(
         raise HTTPException(503, str(exc))
 
     project = await _get_project(project_id, user["user_id"], db)
-    document_id = str(uuid.uuid4())
     file_bytes = await _read_upload(file)
+    file_hash = _content_hash(file_bytes)
+    doc = await _get_or_create_document(
+        db=db,
+        project=project,
+        filename=file.filename,
+        source_type="multimodal",
+        created_by=user["user_id"],
+        mime_type=file.content_type,
+        extension=_extension(file.filename),
+    )
+    await _ensure_new_content(db, doc.id, file_hash)
 
     try:
         from app.services.chunkers.multimodal import ingest_pdf_multimodal
 
         page_embeddings, page_image_urls, num_pages = await asyncio.to_thread(
-            ingest_pdf_multimodal, file_bytes, document_id, settings.MAX_MULTIMODAL_PAGES
+            ingest_pdf_multimodal, file_bytes, doc.id, settings.MAX_MULTIMODAL_PAGES
         )
 
         collection = f"{project.collection}_multimodal"
@@ -213,29 +366,31 @@ async def upload_multimodal(
             page_embeddings=page_embeddings,
             page_image_urls=page_image_urls,
             project_id=project_id,
-            document_id=document_id,
+            document_id=doc.id,
             collection=collection,
         )
 
-        await _save_document(
+        doc, version = await _save_document_version(
             db=db,
-            document_id=document_id,
-            project_id=project_id,
+            project=project,
+            document=doc,
             filename=file.filename,
             source_type="multimodal",
-            created_by=user["user_id"],
-            mime_type=file.content_type,
-            extension=_extension(file.filename),
+            content_hash=file_hash,
+            parser_name="pymupdf",
+            chunker_id="multimodal",
         )
     except ValueError as exc:
-        await _cleanup_document_artifacts(document_id, f"{project.collection}_multimodal", "multimodal")
+        await _cleanup_document_artifacts(doc.id, f"{project.collection}_multimodal", "multimodal")
         raise HTTPException(413, str(exc))
     except Exception:
-        await _cleanup_document_artifacts(document_id, f"{project.collection}_multimodal", "multimodal")
+        await _cleanup_document_artifacts(doc.id, f"{project.collection}_multimodal", "multimodal")
         raise
 
     return {
-        "document_id": document_id,
+        "document_id": doc.id,
+        "document_version_id": version.id,
+        "version_number": version.version_number,
         "project_id": project_id,
         "collection": collection,
         "filename": file.filename,
@@ -258,8 +413,18 @@ async def upload_file(
     _validate_file(file)
     chunker = _validate_text_chunker(chunker)
 
-    document_id = str(uuid.uuid4())
     file_bytes = await _read_upload(file)
+    file_hash = _content_hash(file_bytes)
+    doc = await _get_or_create_document(
+        db=db,
+        project=project,
+        filename=file.filename,
+        source_type="file",
+        created_by=user["user_id"],
+        mime_type=file.content_type,
+        extension=_extension(file.filename),
+    )
+    await _ensure_new_content(db, doc.id, file_hash)
 
     try:
         chunks = await asyncio.to_thread(
@@ -268,25 +433,27 @@ async def upload_file(
             file.filename,
             chunker,
             project_id,
-            document_id,
+            doc.id,
             project.collection,
         )
-        await _save_document(
+        doc, version = await _save_document_version(
             db=db,
-            document_id=document_id,
-            project_id=project_id,
+            project=project,
+            document=doc,
             filename=file.filename,
             source_type="file",
-            created_by=user["user_id"],
-            mime_type=file.content_type,
-            extension=_extension(file.filename),
+            content_hash=file_hash,
+            parser_name=_extension(file.filename).lstrip(".") or "auto",
+            chunker_id=chunker,
         )
     except Exception:
-        await _cleanup_document_artifacts(document_id, project.collection, "file")
+        await _cleanup_document_artifacts(doc.id, project.collection, "file")
         raise
 
     return {
-        "document_id": document_id,
+        "document_id": doc.id,
+        "document_version_id": version.id,
+        "version_number": version.version_number,
         "project_id": project_id,
         "collection": project.collection,
         "filename": file.filename,
@@ -315,8 +482,16 @@ async def upload_url(
 ):
     project = await _get_project(payload.project_id, user["user_id"], db)
     chunker = _validate_text_chunker(payload.chunker)
-    document_id = str(uuid.uuid4())
     raw_text = await parse_url(payload.url)
+    source_hash = _content_hash(raw_text)
+    doc = await _get_or_create_document(
+        db=db,
+        project=project,
+        filename=payload.url,
+        source_type="url",
+        created_by=user["user_id"],
+    )
+    await _ensure_new_content(db, doc.id, source_hash)
 
     try:
         chunks = await asyncio.to_thread(
@@ -324,23 +499,27 @@ async def upload_url(
             raw_text,
             chunker,
             payload.project_id,
-            document_id,
+            doc.id,
             project.collection,
         )
-        await _save_document(
+        doc, version = await _save_document_version(
             db=db,
-            document_id=document_id,
-            project_id=payload.project_id,
+            project=project,
+            document=doc,
             filename=payload.url,
             source_type="url",
-            created_by=user["user_id"],
+            content_hash=source_hash,
+            parser_name="url",
+            chunker_id=chunker,
         )
     except Exception:
-        await _cleanup_document_artifacts(document_id, project.collection, "url")
+        await _cleanup_document_artifacts(doc.id, project.collection, "url")
         raise
 
     return {
-        "document_id": document_id,
+        "document_id": doc.id,
+        "document_version_id": version.id,
+        "version_number": version.version_number,
         "project_id": payload.project_id,
         "collection": project.collection,
         "url": payload.url,
@@ -368,8 +547,16 @@ async def upload_gdrive(
 ):
     project = await _get_project(payload.project_id, user["user_id"], db)
     chunker = _validate_text_chunker(payload.chunker)
-    document_id = str(uuid.uuid4())
     raw_text = await parse_gdrive(payload.file_id, payload.access_token)
+    source_hash = _content_hash(raw_text)
+    doc = await _get_or_create_document(
+        db=db,
+        project=project,
+        filename=payload.file_id,
+        source_type="gdrive",
+        created_by=user["user_id"],
+    )
+    await _ensure_new_content(db, doc.id, source_hash)
 
     try:
         chunks = await asyncio.to_thread(
@@ -377,23 +564,27 @@ async def upload_gdrive(
             raw_text,
             chunker,
             payload.project_id,
-            document_id,
+            doc.id,
             project.collection,
         )
-        await _save_document(
+        doc, version = await _save_document_version(
             db=db,
-            document_id=document_id,
-            project_id=payload.project_id,
+            project=project,
+            document=doc,
             filename=payload.file_id,
             source_type="gdrive",
-            created_by=user["user_id"],
+            content_hash=source_hash,
+            parser_name="gdrive",
+            chunker_id=chunker,
         )
     except Exception:
-        await _cleanup_document_artifacts(document_id, project.collection, "gdrive")
+        await _cleanup_document_artifacts(doc.id, project.collection, "gdrive")
         raise
 
     return {
-        "document_id": document_id,
+        "document_id": doc.id,
+        "document_version_id": version.id,
+        "version_number": version.version_number,
         "project_id": payload.project_id,
         "collection": project.collection,
         "file_id": payload.file_id,
