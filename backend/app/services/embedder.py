@@ -1,19 +1,26 @@
-from sentence_transformers import SentenceTransformer
+import numpy as np
+from fastembed import TextEmbedding
 
 _model = None
 
 
-def get_embedding_model() -> SentenceTransformer:
+def get_embedding_model() -> TextEmbedding:
     global _model
     if _model is None:
-        _model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        _model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
     return _model
+
+def _normalize(vector) -> list[float]:
+    arr = np.asarray(vector, dtype=np.float32)
+    norm = np.linalg.norm(arr)
+    if norm:
+        arr = arr / norm
+    return arr.tolist()
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
-    return get_embedding_model().encode(texts, normalize_embeddings=True).tolist()
+    return [_normalize(vector) for vector in get_embedding_model().passage_embed(texts)]
 
 def embed_query(query: str) -> list[float]:
-    # bge models need this prefix for queries
-    return get_embedding_model().encode(f"Represent this sentence: {query}", normalize_embeddings=True).tolist()
+    return _normalize(next(get_embedding_model().query_embed([query])))
