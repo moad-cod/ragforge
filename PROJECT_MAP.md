@@ -1,16 +1,16 @@
 # RAGForge Project Map
 
-RAGForge is a FastAPI SaaS backend for authenticated, multi-tenant Retrieval-Augmented Generation. It ingests documents, chunks and embeds text, stores dense and sparse vectors in Qdrant, and answers questions through OpenAI-compatible LLM providers.
+RAGForge is a FastAPI SaaS backend for authenticated, multi-tenant Retrieval-Augmented Generation. It ingests files and web sources, versions document content, chunks and embeds text, stores dense and sparse vectors in Qdrant, and answers questions through OpenAI-compatible LLM providers.
 
-The default backend is now optimized for the text RAG path. Heavy optional features such as ColPali multimodal ingestion and CrossEncoder reranking are kept out of the default runtime requirements so Docker builds stay practical.
+The default backend is optimized for the text RAG path. Heavy optional features such as ColPali multimodal ingestion and CrossEncoder reranking are kept out of the default runtime requirements so Docker builds stay practical.
 
 ## Architecture
 
 ```text
-Client
+Client / Swagger UI
   -> FastAPI routers
-  -> Auth / Projects / Documents / Chunkers / Ingest / Query
-  -> SQLAlchemy async + PostgreSQL for users, projects, documents
+  -> Auth / Organizations / Projects / Documents / Chunkers / Ingest / Query
+  -> SQLAlchemy async + PostgreSQL control-plane metadata
   -> Parser + chunker registry + embedding services
   -> FastEmbed dense BGE vectors + FastEmbed BM25 sparse vectors
   -> Qdrant dense+sparse vector collections
@@ -24,10 +24,12 @@ Client
 |---|---|---|
 | App entry | `backend/app/main.py` | Creates the FastAPI app and mounts routers |
 | Config | `backend/app/core/config.py` | Loads `.env`, required URLs/secrets, optional LLM/R2 settings, limits |
-| Auth | `backend/app/core/auth.py`, `backend/app/api/auth.py` | JWT dependency, register, login, user profile update/delete |
-| Database | `backend/app/core/db.py`, `backend/app/models/tables.py` | Async SQLAlchemy engine/session and `User`, `Project`, `Document` models |
-| Projects | `backend/app/api/projects.py` | Project CRUD and Qdrant collection lifecycle |
-| Documents | `backend/app/api/documents.py` | Document list/get/delete and vector/image artifact cleanup |
+| Auth | `backend/app/core/auth.py`, `backend/app/api/auth.py` | JWT dependency, register, login, current-user read/update/delete |
+| Database | `backend/app/core/db.py` | Async SQLAlchemy engine, session dependency, declarative `Base` |
+| Models | `backend/app/models/*.py` | One SQLAlchemy model per table; `tables.py` remains a compatibility export |
+| Organizations | `backend/app/api/organizations.py` | Organization CRUD and soft delete |
+| Projects | `backend/app/api/projects.py` | Project CRUD, ownership checks, Qdrant collection lifecycle |
+| Documents | `backend/app/api/documents.py` | Document list/get/delete and document version listing |
 | Ingestion | `backend/app/api/ingest.py` | File, URL, Google Drive, and optional multimodal ingestion |
 | Query | `backend/app/api/query.py` | Text RAG query and optional multimodal page query |
 | Chunker catalog | `backend/app/api/chunkers.py`, `backend/app/services/chunkers/registry.py` | Public chunker metadata, validation, and lazy callable lookup |
@@ -41,44 +43,130 @@ Client
 
 ```text
 backend/
-  Dockerfile            # FastAPI image used by docker-compose
-  .dockerignore         # Excludes local venv, caches, .env, logs
-  requirements.txt      # Slim default backend runtime dependencies
+  Dockerfile
+  .dockerignore
+  requirements.txt
   app/
-    api/                # FastAPI routers
-    core/               # auth, config, db session
-    models/             # SQLAlchemy tables
-    services/           # parsing, embedding, indexing, retrieval, storage
-    services/chunkers/  # chunking implementations and registry
-  create_tables.py      # create missing database tables
-  reset_dev_db.py       # destructive local DB/Qdrant reset
-  check_data.py         # Qdrant/debug helper
-  cleanup.py            # document chunk cleanup helper
-  tests/                # chunker tests and evaluation scripts
+    api/
+      auth.py
+      chunkers.py
+      documents.py
+      ingest.py
+      organizations.py
+      projects.py
+      query.py
+    core/
+      auth.py
+      config.py
+      db.py
+    models/
+      __init__.py
+      organization.py
+      user.py
+      project.py
+      document.py
+      document_version.py
+      tables.py
+    services/
+      chunkers/
+      retrieval/
+      embedder.py
+      indexer.py
+      parser.py
+      retriever.py
+      storage.py
+  create_tables.py
+  reset_dev_db.py
+  check_data.py
+  cleanup.py
+  tests/
+Data-Modeling/
+  ControlPlane.md
+  Tables.png
+  design.png
+  lifecyvle.png
+documents/
+  Pdf/
 scripts/
-  init_minio.sh         # creates local object-storage buckets
-docker-compose.yml      # local core services, FastAPI image, optional batch profile
-test_chunkers.sh        # end-to-end chunker smoke test
-PROJECT_MAP.md          # this architecture map
-README.md               # setup and API reference
+  init_minio.sh
+docker-compose.yml
+test_chunkers.sh
+PROJECT_MAP.md
+README.md
 ```
 
 ## Data Model
 
 ```text
-User
-  id, email, hashed_password, created_at
+Organization
+  id, name, created_at, updated_at, deleted_at
+  has many Users
   has many Projects
 
+User
+  id, organization_id, email, full_name, hashed_password
+  created_at, updated_at, deleted_at
+  belongs to Organization
+  creates many Projects
+
 Project
-  id, user_id, name, collection, created_at
+  id, organization_id, name, qdrant_collection, created_by
+  created_at, updated_at, deleted_at
+  belongs to Organization
+  belongs to creator User
   has many Documents
 
 Document
-  id, project_id, filename, source, chunks, collection, created_at
+  id, project_id, current_version_id, source_type, filename
+  mime_type, extension, status, created_by
+  created_at, updated_at, deleted_at
+  belongs to Project
+  has many DocumentVersions
+
+DocumentVersion
+  id, document_id, version_number, content_hash
+  bronze_path, silver_path, gold_path
+  parser_name, chunker_id, embedding_model
+  status, error_message, created_at
+  belongs to Document
 ```
 
-Projects use UUID-based Qdrant collection names (`project_<uuid>`) so display names can be changed without reindexing and cannot collide across tenants.
+Projects use UUID-based Qdrant collection names (`project_<uuid>`) so display names can be changed without reindexing and cannot collide across tenants. `Document` is the logical user-facing asset; `DocumentVersion` records immutable ingestion attempts/content versions for that asset.
+
+## Model Package Layout
+
+The model package now follows one table per file:
+
+| Table | Model file |
+|---|---|
+| `organizations` | `backend/app/models/organization.py` |
+| `users` | `backend/app/models/user.py` |
+| `projects` | `backend/app/models/project.py` |
+| `documents` | `backend/app/models/document.py` |
+| `document_versions` | `backend/app/models/document_version.py` |
+
+`backend/app/models/tables.py` imports and re-exports all models to keep existing imports working:
+
+```python
+from app.models.tables import Organization, User, Project, Document, DocumentVersion
+```
+
+New code can also import from `app.models`.
+
+## API Surface
+
+| Area | Endpoint |
+|---|---|
+| Health | `GET /health` |
+| Auth | `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `PATCH /auth/me`, `DELETE /auth/me` |
+| Organizations | `POST /organizations/`, `GET /organizations/`, `GET /organizations/{organization_id}`, `PATCH /organizations/{organization_id}`, `DELETE /organizations/{organization_id}` |
+| Projects | `POST /projects/`, `GET /projects/`, `GET /projects/{project_id}`, `PATCH /projects/{project_id}`, `DELETE /projects/{project_id}` |
+| Documents | `GET /documents/?project_id=...`, `GET /documents/{document_id}`, `GET /documents/{document_id}/versions`, `DELETE /documents/{document_id}` |
+| Chunkers | `GET /chunkers` |
+| Ingest | `POST /ingest/file`, `POST /ingest/url`, `POST /ingest/gdrive`, `POST /ingest/multimodal` |
+| Query | `POST /rag/query`, `POST /rag/multimodal-query` |
+
+`DocumentVersion` is intentionally exposed through `GET /documents/{document_id}/versions`, not as a separate top-level `/document-versions` router. That keeps versions scoped under their parent document and enforces document ownership before listing version metadata.
 
 ## Docker And Local Services
 
@@ -99,45 +187,50 @@ The FastAPI container uses `/app` as its working directory, mounts `./backend:/a
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Batch profile services, enabled with `--profile batch`, add:
-
-| Service | Role |
-|---|---|
-| `airflow-postgres` | Airflow metadata database |
-| `airflow-init` | Airflow DB migration and admin user creation |
-| `airflow-webserver` | Airflow UI on port `8080` |
-| `airflow-scheduler` | Airflow scheduler |
-| `spark` | Local Spark container for batch experiments |
+Batch profile services, enabled with `--profile batch`, add Airflow metadata/webserver/scheduler services and Spark for batch experiments.
 
 ## Requirements Strategy
 
 `backend/requirements.txt` is intentionally a slim default runtime set. It includes FastAPI, SQLAlchemy/asyncpg, Qdrant, FastEmbed, document parsers, auth, OpenAI/Groq clients, and S3/R2 support.
 
-It intentionally does not include the older full frozen environment or heavy optional stacks such as:
+It intentionally does not include older full frozen-environment dependencies or heavy optional stacks such as PyTorch/CUDA wheels, `sentence-transformers`, `transformers`, `colpali_engine`, LangChain, and evaluation/training packages.
 
-- PyTorch / torchvision / CUDA / NVIDIA wheels
-- `sentence-transformers`
-- `transformers`
-- `colpali_engine`
-- LangChain and evaluation/training packages
-- CrossEncoder reranker dependencies
-
-This keeps Docker builds focused on normal text RAG. Optional multimodal ColPali and CrossEncoder reranking should be added through a separate image, profile, or extras file if they are needed.
+Optional multimodal ColPali and CrossEncoder reranking should be added through a separate image, profile, or extras file if they are needed.
 
 ## Ingestion Flow
 
 1. The user authenticates with JWT.
 2. The API verifies project ownership.
-3. The source is parsed into text or, for optional multimodal ingestion, rendered page images.
-4. The chunker ID is validated through the central registry.
-5. Text chunkers produce chunks.
-6. FastEmbed creates normalized dense BGE vectors.
-7. FastEmbed BM25 creates sparse vectors.
-8. Qdrant stores vectors with `project_id` and `document_id` payload filters.
-9. PostgreSQL stores document metadata.
-10. On failure, ingestion attempts best-effort cleanup of Qdrant/R2 artifacts.
+3. The API gets or creates a logical `Document`.
+4. The source content is hashed to prevent duplicate versions for the same document.
+5. The source is parsed into text or, for optional multimodal ingestion, rendered page images.
+6. The chunker ID is validated through the central registry.
+7. Text chunkers produce chunks.
+8. FastEmbed creates normalized dense BGE vectors.
+9. FastEmbed BM25 creates sparse vectors.
+10. Qdrant stores vectors with `project_id` and `document_id` payload filters.
+11. PostgreSQL stores or updates `Document` and creates a `DocumentVersion`.
+12. On failure, ingestion attempts best-effort cleanup of Qdrant/R2 artifacts.
 
 Heavy parsing, embedding, indexing, retrieval, and LLM calls are offloaded with `asyncio.to_thread` to avoid blocking FastAPI's event loop.
+
+## Document Versioning
+
+Document versioning is currently metadata-first:
+
+- Re-uploading the same filename/source in the same project updates the existing logical `Document`.
+- A new content hash creates the next `DocumentVersion`.
+- Re-uploading identical content for the same document returns `409`.
+- `Document.current_version_id` points to the latest successful version.
+- Version rows store lineage paths for bronze/silver/gold artifacts, parser, chunker, embedding model, status, and errors.
+
+The API currently lists versions with:
+
+```text
+GET /documents/{document_id}/versions
+```
+
+There is no separate route for reading one version by ID, rolling back to an older version, or deleting a single version yet.
 
 ## Chunking System
 
@@ -195,18 +288,6 @@ question
 
 The multimodal flow requires the optional ColPali/ColQwen stack and R2/S3 settings. Those packages are not part of the slim default Docker image.
 
-## API Surface
-
-| Area | Endpoint |
-|---|---|
-| Health | `GET /health` |
-| Auth | `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `PATCH /auth/me`, `DELETE /auth/me` |
-| Projects | `POST /projects/`, `GET /projects/`, `GET /projects/{project_id}`, `PATCH /projects/{project_id}`, `DELETE /projects/{project_id}` |
-| Documents | `GET /documents/?project_id=...`, `GET /documents/{document_id}`, `DELETE /documents/{document_id}` |
-| Chunkers | `GET /chunkers` |
-| Ingest | `POST /ingest/file`, `POST /ingest/url`, `POST /ingest/gdrive`, `POST /ingest/multimodal` |
-| Query | `POST /rag/query`, `POST /rag/multimodal-query` |
-
 ## Configuration
 
 Core settings:
@@ -248,8 +329,8 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 ## Current Design Notes
 
 - The project uses SQLAlchemy model creation scripts rather than Alembic migrations.
-- Qdrant is the vector store; Postgres stores ownership and document metadata.
-- FastEmbed now handles both default dense embeddings and BM25 sparse vectors.
+- Qdrant is the vector store; Postgres stores control-plane ownership, document metadata, and document version metadata.
+- FastEmbed handles both default dense embeddings and BM25 sparse vectors.
 - R2/S3 storage is used only for optional multimodal PDF page images.
 - The text ingestion endpoint rejects the `multimodal` chunker because multimodal has its own endpoint.
 - The registry is built for SaaS frontend display and does not expose callable paths publicly.
