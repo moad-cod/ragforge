@@ -12,6 +12,7 @@ pydantic-settings==2.14.2
 
 SQLAlchemy==2.0.51
 asyncpg==0.31.0
+alembic==1.16.5
 
 python-jose[cryptography]==3.5.0
 bcrypt==5.0.0
