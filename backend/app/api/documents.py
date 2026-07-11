@@ -1,11 +1,14 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.models.tables import Document, DocumentVersion, Project
-from datetime import datetime
+from app.repositories import document_versions as version_repository
+from app.repositories import documents as document_repository
+from app.repositories import projects as project_repository
 import asyncio
 
 router = APIRouter()
@@ -78,31 +81,13 @@ def _document_version_payload(version: DocumentVersion) -> DocumentVersionRespon
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 async def _get_project(project_id: str, user_id: str, db: AsyncSession) -> Project:
-    result = await db.execute(
-        select(Project).where(
-            Project.id == project_id,
-            Project.created_by == user_id,
-            Project.deleted_at.is_(None),
-        )
-    )
-    project = result.scalar_one_or_none()
+    project = await project_repository.get_owned_project(db, project_id, user_id)
     if not project:
         raise HTTPException(403, "Project not found or access denied")
     return project
 
 async def _get_document(document_id: str, user_id: str, db: AsyncSession) -> Document:
-    # join with project to verify ownership
-    result = await db.execute(
-        select(Document)
-        .join(Project, Document.project_id == Project.id)
-        .where(
-            Document.id == document_id,
-            Document.deleted_at.is_(None),
-            Project.created_by == user_id,
-            Project.deleted_at.is_(None),
-        )
-    )
-    doc = result.scalar_one_or_none()
+    doc = await document_repository.get_owned_document(db, document_id, user_id)
     if not doc:
         raise HTTPException(404, "Document not found")
     return doc
@@ -118,13 +103,7 @@ async def list_documents(
 ):
     await _get_project(project_id, user["user_id"], db)  # verify ownership
 
-    result = await db.execute(
-        select(Document).where(
-            Document.project_id == project_id,
-            Document.deleted_at.is_(None),
-        )
-    )
-    docs = result.scalars().all()
+    docs = await document_repository.list_project_documents(db, project_id)
     return [_document_payload(d) for d in docs]
 
 
@@ -147,12 +126,8 @@ async def list_document_versions(
     user: dict = Depends(get_current_user),
 ):
     doc = await _get_document(document_id, user["user_id"], db)
-    result = await db.execute(
-        select(DocumentVersion)
-        .where(DocumentVersion.document_id == doc.id)
-        .order_by(DocumentVersion.version_number)
-    )
-    return [_document_version_payload(version) for version in result.scalars().all()]
+    versions = await version_repository.list_document_versions(db, doc.id)
+    return [_document_version_payload(version) for version in versions]
 
 
 # ── DELETE document ───────────────────────────────────────────────────────────
@@ -177,8 +152,7 @@ async def delete_document(
         except Exception:
             pass
 
-    doc.status = "deleted"
-    doc.deleted_at = datetime.utcnow()
+    await document_repository.soft_delete_document(db, doc.id)
     await db.commit()
 
     return {"deleted": document_id}

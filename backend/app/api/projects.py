@@ -4,6 +4,7 @@ from sqlalchemy import select
 from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.models.tables import Project, Document, Organization
+from app.repositories import projects as project_repository
 from app.services.indexer import delete_document_chunks, delete_collection
 from pydantic import BaseModel, field_validator
 from datetime import datetime
@@ -76,14 +77,14 @@ async def create_project(
 
     project_id = str(uuid.uuid4())
     collection = f"project_{project_id}"
-    project = Project(
+    project = await project_repository.create_project(
+        db,
         id=project_id,
         organization_id=body.organization_id,
         created_by=user["user_id"],
         name=body.name,
         qdrant_collection=collection,
     )
-    db.add(project)
     await db.commit()
     await db.refresh(project)
     return _project_payload(project)
@@ -94,13 +95,7 @@ async def list_projects(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(Project).where(
-            Project.created_by == user["user_id"],
-            Project.deleted_at.is_(None),
-        )
-    )
-    projects = result.scalars().all()
+    projects = await project_repository.list_user_projects(db, user["user_id"])
     return [_project_payload(p) for p in projects]
 
 
@@ -110,14 +105,7 @@ async def get_project(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(Project).where(
-            Project.id == project_id,
-            Project.created_by == user["user_id"],
-            Project.deleted_at.is_(None),
-        )
-    )
-    project = result.scalar_one_or_none()
+    project = await project_repository.get_owned_project(db, project_id, user["user_id"])
     if not project:
         raise HTTPException(404, "Project not found")
     return _project_payload(project)
@@ -130,20 +118,12 @@ async def update_project(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(Project).where(
-            Project.id == project_id,
-            Project.created_by == user["user_id"],
-            Project.deleted_at.is_(None),
-        )
-    )
-    project = result.scalar_one_or_none()
+    project = await project_repository.rename_project(db, project_id, user["user_id"], body.name)
     if not project:
         raise HTTPException(404, "Project not found")
 
     # only update display name — collection name stays the same
     # changing collection would require re-indexing all documents
-    project.name = body.name
     await db.commit()
     await db.refresh(project)
 
@@ -156,14 +136,7 @@ async def delete_project(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(Project).where(
-            Project.id == project_id,
-            Project.created_by == user["user_id"],
-            Project.deleted_at.is_(None),
-        )
-    )
-    project = result.scalar_one_or_none()
+    project = await project_repository.get_owned_project(db, project_id, user["user_id"])
     if not project:
         raise HTTPException(404, "Project not found")
 
