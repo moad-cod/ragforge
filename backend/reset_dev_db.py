@@ -1,6 +1,19 @@
 import asyncio
+from sqlalchemy import text
+
 from app.core.db import engine, Base
-from app.models.tables import Organization, User, Project, Document, DocumentVersion
+from app.models.tables import (
+    Chunk,
+    Document,
+    DocumentVersion,
+    EmbeddingRun,
+    IngestionRun,
+    Organization,
+    Project,
+    QueryLog,
+    RetrievalLog,
+    User,
+)
 from app.core.config import settings
 from qdrant_client import QdrantClient
 
@@ -18,7 +31,16 @@ def reset_qdrant() -> int:
 
 async def rebuild_tables() -> None:
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        # drop_all() cannot reset a legacy schema when an out-of-line foreign
+        # key exists in current metadata but not in the database. Drop the
+        # application tables together so PostgreSQL resolves either version of
+        # the dependency graph, then recreate the current schema from metadata.
+        preparer = conn.dialect.identifier_preparer
+        table_names = ", ".join(
+            preparer.quote(table_name)
+            for table_name in sorted(Base.metadata.tables)
+        )
+        await conn.execute(text(f"DROP TABLE IF EXISTS {table_names} CASCADE"))
         await conn.run_sync(Base.metadata.create_all)
 
 
