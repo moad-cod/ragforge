@@ -22,6 +22,8 @@ class User(Base):
 
     organization = relationship("Organization", back_populates="users")
     projects = relationship("Project", back_populates="creator", foreign_keys="Project.created_by")
+    ingestion_runs = relationship("IngestionRun", back_populates="creator")
+    query_logs = relationship("QueryLog", back_populates="user")
 
     __table_args__ = (
         Index("ix_users_organization_id", "organization_id"),

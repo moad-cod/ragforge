@@ -25,7 +25,10 @@ class DocumentVersion(Base):
     error_message = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    document = relationship("Document", back_populates="versions")
+    document = relationship("Document", back_populates="versions", foreign_keys=[document_id])
+    ingestion_runs = relationship("IngestionRun", back_populates="document_version")
+    chunks = relationship("Chunk", back_populates="document_version")
+    embedding_runs = relationship("EmbeddingRun", back_populates="document_version")
 
     __table_args__ = (
         UniqueConstraint("document_id", "version_number", name="uq_document_versions_document_version_number"),

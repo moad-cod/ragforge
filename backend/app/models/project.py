@@ -23,6 +23,10 @@ class Project(Base):
     organization = relationship("Organization", back_populates="projects")
     creator = relationship("User", back_populates="projects", foreign_keys=[created_by])
     documents = relationship("Document", back_populates="project", cascade="all, delete-orphan")
+    ingestion_runs = relationship("IngestionRun", back_populates="project", cascade="all, delete-orphan")
+    chunks = relationship("Chunk", back_populates="project", cascade="all, delete-orphan")
+    embedding_runs = relationship("EmbeddingRun", back_populates="project", cascade="all, delete-orphan")
+    query_logs = relationship("QueryLog", back_populates="project", cascade="all, delete-orphan")
 
     @property
     def collection(self) -> str:
