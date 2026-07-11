@@ -59,6 +59,15 @@ backend/
       auth.py
       config.py
       db.py
+    repositories/
+      projects.py
+      documents.py
+      document_versions.py
+      ingestion_runs.py
+      chunks.py
+      embedding_runs.py
+      query_logs.py
+      retrieval_logs.py
     models/
       __init__.py
       organization.py
@@ -81,6 +90,17 @@ backend/
       parser.py
       retriever.py
       storage.py
+      bronze_storage.py
+      airflow.py
+      pipeline_status.py
+  alembic/
+    env.py
+    versions/
+      20260711_0001_create_ragforge_v2_database_schema.py
+  airflow/
+    dags/ragforge_ingestion.py
+    plugins/ragforge_control_plane.py
+  alembic.ini
   create_tables.py
   reset_dev_db.py
   check_data.py
@@ -195,7 +215,24 @@ Airflow:    pipeline scheduling; ingestion_runs.airflow_dag_run_id provides trac
 
 Status validation is enforced twice: SQLAlchemy rejects invalid values before persistence, and PostgreSQL check constraints protect writes from any other client. Canonical values live in `backend/app/models/statuses.py`.
 
-The new tables are currently the durable schema foundation. The existing ingestion and query endpoints remain synchronous and do not yet populate every run/log table; upload orchestration, Airflow updates, chunk persistence, and query/retrieval logging are the later runtime-wiring tasks described as Tasks 15 and 17–20 in the control-plane plan.
+## Control-Plane Runtime (Tasks 12–17)
+
+Tasks 12–17 add the migration and first runtime consumers of the control-plane schema:
+
+| Task | Implemented result |
+|---|---|
+| 12 | Async Alembic environment and reversible `20260711_0001` full-schema migration |
+| 13 | Ten SQLAlchemy models matching the migrated PostgreSQL schema |
+| 14 | Async repository modules for projects, documents, versions, ingestion, chunks, embeddings, queries, and retrievals |
+| 15 | `POST /ingest/file` lands raw bytes in MinIO Bronze and returns an ingestion run with HTTP 202 |
+| 16 | `GET /ingest/runs/{ingestion_run_id}` reports durable status and Bronze/Silver/Gold/Qdrant progress |
+| 17 | Authenticated internal pipeline API, optional Airflow REST enqueue, Airflow client plugin, and ingestion DAG status boundaries |
+
+The repository layer owns reusable database operations and does not commit implicitly. API routes and pipeline boundaries control transactions, allowing multi-row document/version/run creation to remain atomic.
+
+Airflow talks to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally avoids importing the application’s SQLAlchemy 2 dependency into Airflow 2.10’s SQLAlchemy runtime. The internal API delegates every write to the same ingestion repository used elsewhere.
+
+The `ragforge_ingestion` DAG exposes the Task 17 sequence (`validate_bronze`, `bronze_to_silver_spark`, `silver_to_gold_embed`, `upsert_qdrant`, `update_postgres_status`). Transformation commands are configured through environment variables and receive `{ingestion_run_id}`; a missing command fails the run instead of falsely advancing its durable status. Chunk/Qdrant payload persistence and query/retrieval logging remain Tasks 18–20.
 
 ## Model Package Layout
 
@@ -235,8 +272,9 @@ New code can also import from `app.models`.
 | Projects | `POST /projects/`, `GET /projects/`, `GET /projects/{project_id}`, `PATCH /projects/{project_id}`, `DELETE /projects/{project_id}` |
 | Documents | `GET /documents/?project_id=...`, `GET /documents/{document_id}`, `GET /documents/{document_id}/versions`, `DELETE /documents/{document_id}` |
 | Chunkers | `GET /chunkers` |
-| Ingest | `POST /ingest/file`, `POST /ingest/url`, `POST /ingest/gdrive`, `POST /ingest/multimodal` |
+| Ingest | `POST /ingest/file` (HTTP 202 Bronze landing), `GET /ingest/runs/{ingestion_run_id}`, `POST /ingest/url`, `POST /ingest/gdrive`, `POST /ingest/multimodal` |
 | Query | `POST /rag/query`, `POST /rag/multimodal-query` |
+| Pipeline internal | `GET/PATCH /internal/pipeline/ingestion-runs/{ingestion_run_id}` with service token |
 
 `DocumentVersion` is intentionally exposed through `GET /documents/{document_id}/versions`, not as a separate top-level `/document-versions` router. That keeps versions scoped under their parent document and enforces document ownership before listing version metadata.
 
@@ -269,22 +307,18 @@ It intentionally does not include older full frozen-environment dependencies or 
 
 Optional multimodal ColPali and CrossEncoder reranking should be added through a separate image, profile, or extras file if they are needed.
 
-## Ingestion Flow
+## File Ingestion Flow
 
 1. The user authenticates with JWT.
 2. The API verifies project ownership.
-3. The API gets or creates a logical `Document`.
-4. The source content is hashed to prevent duplicate versions for the same document.
-5. The source is parsed into text or, for optional multimodal ingestion, rendered page images.
-6. The chunker ID is validated through the central registry.
-7. Text chunkers produce chunks.
-8. FastEmbed creates normalized dense BGE vectors.
-9. FastEmbed BM25 creates sparse vectors.
-10. Qdrant stores vectors with `project_id` and `document_id` payload filters.
-11. PostgreSQL stores or updates `Document` and creates a `DocumentVersion`.
-12. On failure, ingestion attempts best-effort cleanup of Qdrant/R2 artifacts.
+3. The API validates the file/chunker, hashes content, and gets or creates a logical `Document`.
+4. Raw bytes are stored under the versioned path in the MinIO `bronze` bucket.
+5. One transaction creates `DocumentVersion(status=landed)` and `IngestionRun(status=landed)`.
+6. The API returns HTTP 202 with document, version, and ingestion-run IDs; it does not parse/embed/index in the request.
+7. When `AIRFLOW_API_URL` is configured, a post-response task triggers `ragforge_ingestion` and records its DAG-run ID/status as `queued`.
+8. Airflow or Spark jobs update PostgreSQL at `running`, `silver_completed`, `gold_completed`, and `indexed`; failures durably store their error.
 
-Heavy parsing, embedding, indexing, retrieval, and LLM calls are offloaded with `asyncio.to_thread` to avoid blocking FastAPI's event loop.
+URL, Google Drive, and optional multimodal endpoints retain their existing synchronous implementation for now. Heavy operations on those paths remain offloaded with `asyncio.to_thread` where applicable.
 
 ## Document Versioning
 
@@ -389,7 +423,8 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 | `backend/requirements.txt` | Slim runtime dependency list for default backend |
 | `docker-compose.yml` | Starts local Postgres, Qdrant, MinIO, Redis, FastAPI, and optional batch profile |
 | `scripts/init_minio.sh` | Creates local MinIO buckets |
-| `backend/create_tables.py` | Creates all missing application and control-plane tables for a clean/current schema |
+| `backend/alembic.ini`, `backend/alembic/` | Reversible production schema migration and autogenerate metadata integration |
+| `backend/create_tables.py` | Legacy/development helper for creating missing tables directly from metadata |
 | `backend/reset_dev_db.py` | Destructively deletes Qdrant collections and rebuilds DB tables |
 | `backend/check_data.py` | Helper for inspecting indexed Qdrant data |
 | `backend/cleanup.py` | Helper for deleting document chunks from Qdrant |
@@ -401,7 +436,7 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 
 ## Current Design Notes
 
-- The project uses SQLAlchemy model creation scripts rather than Alembic migrations. `create_all` creates missing objects but is not a substitute for migrating an already-existing database; Task 12 remains the planned Alembic migration path.
+- Alembic is the production schema path. Revision `20260711_0001` upgrades an empty database to the full schema and downgrades cleanly; `create_tables.py` remains a development compatibility helper.
 - Qdrant is the vector store; Postgres stores control-plane ownership, version/run lineage, chunk metadata, and query/retrieval audit metadata.
 - FastEmbed handles both default dense embeddings and BM25 sparse vectors.
 - R2/S3 storage is used only for optional multimodal PDF page images.

@@ -15,6 +15,8 @@ RAGForge is a FastAPI SaaS backend for multi-tenant Retrieval-Augmented Generati
 - Gemini and Groq query providers.
 - Local BGE embeddings with lazy model loading.
 - Development reset and smoke-test scripts.
+- Alembic-managed PostgreSQL control-plane schema and repository layer.
+- Asynchronous file landing in MinIO Bronze with durable ingestion-run status.
 
 ## Tech Stack
 
@@ -115,12 +117,14 @@ Generate a secret key:
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-### 4. Create tables
+### 4. Apply database migrations
 
 ```bash
 cd backend
-python create_tables.py
+alembic upgrade head
 ```
+
+`create_tables.py` remains available only as a development compatibility helper. For a database previously created directly from SQLAlchemy metadata, use a fresh development reset or verify the schema before stamping the Alembic revision.
 
 For a fresh destructive local reset of PostgreSQL tables and Qdrant collections:
 
@@ -184,7 +188,8 @@ API docs: `http://localhost:8000/docs`
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/ingest/file` | Upload and index a file |
+| POST | `/ingest/file` | Land a file in Bronze and return an ingestion run (HTTP 202) |
+| GET | `/ingest/runs/{ingestion_run_id}` | Read durable Bronze/Silver/Gold/Qdrant progress |
 | POST | `/ingest/url` | Scrape and index a public URL |
 | POST | `/ingest/gdrive` | Import and index a Google Drive file |
 | POST | `/ingest/multimodal` | Render, embed, upload, and index PDF pages |
@@ -198,6 +203,19 @@ chunker    fixed_size | paragraph | sentence | semantic | hierarchical | late_ch
 ```
 
 `multimodal` is listed by `GET /chunkers`, but text file ingestion rejects it because it uses `/ingest/multimodal`.
+
+`POST /ingest/file` returns immediately after durable landing:
+
+```json
+{
+  "document_id": "uuid",
+  "document_version_id": "uuid",
+  "ingestion_run_id": "uuid",
+  "status": "landed"
+}
+```
+
+Set `AIRFLOW_API_URL` and `PIPELINE_SERVICE_TOKEN` to enqueue landed runs automatically. The Airflow DAG also requires the three data-plane command variables documented in `.env.example`; missing commands fail the run instead of marking incomplete processing as successful.
 
 ### Query
 
