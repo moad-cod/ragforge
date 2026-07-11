@@ -1,6 +1,17 @@
 import asyncio
 from app.core.db import engine, Base
-from app.models.tables import Organization, User, Project, Document, DocumentVersion
+from app.models.tables import (
+    Chunk,
+    Document,
+    DocumentVersion,
+    EmbeddingRun,
+    IngestionRun,
+    Organization,
+    Project,
+    QueryLog,
+    RetrievalLog,
+    User,
+)
 
 async def main():
     async with engine.begin() as conn:
