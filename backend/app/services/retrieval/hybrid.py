@@ -9,6 +9,7 @@ from app.services.retrieval.rerank import rerank as rerank_fn
 qdrant = QdrantClient(
     url=settings.QDRANT_URL,
     api_key=settings.QDRANT_API_KEY or None,
+    check_compatibility=False,
 )
 
 def _as_text(value) -> str:

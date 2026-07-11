@@ -10,6 +10,7 @@ import uuid
 qdrant = QdrantClient(
     url=settings.QDRANT_URL,
     api_key=settings.QDRANT_API_KEY or None,
+    check_compatibility=False,
 )
 
 def ensure_collection(collection: str, vector_size: int = 384):

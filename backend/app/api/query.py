@@ -19,6 +19,7 @@ router = APIRouter()
 qdrant = QdrantClient(                                           # ← added
     url=settings.QDRANT_URL,
     api_key=settings.QDRANT_API_KEY or None,
+    check_compatibility=False,
 )
 
 LLM_CONFIGS = {

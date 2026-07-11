@@ -6,6 +6,7 @@ from app.services.retrieval.hybrid import hybrid_search
 qdrant = QdrantClient(
     url=settings.QDRANT_URL,
     api_key=settings.QDRANT_API_KEY or None,
+    check_compatibility=False,
 )
 
 def search(
