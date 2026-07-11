@@ -1,10 +1,13 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, select
 from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.models.tables import Project, Document, DocumentVersion
+from app.repositories import document_versions as version_repository
+from app.repositories import documents as document_repository
+from app.repositories import ingestion_runs as ingestion_repository
+from app.repositories import projects as project_repository
 from app.services.parser import parse_document, parse_url, parse_gdrive
 from app.services.embedder import embed_texts
 from app.services.indexer import index_chunks, index_hierarchical_chunks, index_multimodal_pages
@@ -18,6 +21,8 @@ from app.services.chunkers import late_chunking as late_chunking_module
 from app.services.chunkers import hierarchical as hierarchical_module
 from app.core.config import settings
 from app.services.storage import delete_document_images
+from app.services.airflow import enqueue_ingestion
+from app.services.bronze_storage import delete_raw_file, upload_raw_file
 import asyncio
 import hashlib
 import uuid
@@ -41,14 +46,7 @@ SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".html", ".ht
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def _get_project(project_id: str, user_id: str, db: AsyncSession) -> Project:
-    result = await db.execute(
-        select(Project).where(
-            Project.id == project_id,
-            Project.created_by == user_id,
-            Project.deleted_at.is_(None),
-        )
-    )
-    project = result.scalar_one_or_none()
+    project = await project_repository.get_owned_project(db, project_id, user_id)
     if not project:
         raise HTTPException(403, "Project not found or access denied")
     return project
@@ -137,10 +135,7 @@ def _version_paths(
 
 
 async def _next_version_number(db: AsyncSession, document_id: str) -> int:
-    result = await db.execute(
-        select(func.max(DocumentVersion.version_number)).where(DocumentVersion.document_id == document_id)
-    )
-    return (result.scalar_one_or_none() or 0) + 1
+    return await version_repository.get_latest_version_number(db, document_id) + 1
 
 
 async def _get_or_create_document(
@@ -153,22 +148,15 @@ async def _get_or_create_document(
     extension: str | None = None,
     status: str = "processing",
 ) -> Document:
-    result = await db.execute(
-        select(Document).where(
-            Document.project_id == project.id,
-            Document.filename == filename,
-            Document.source_type == source_type,
-            Document.deleted_at.is_(None),
-        )
-    )
-    doc = result.scalar_one_or_none()
+    doc = await document_repository.find_logical_document(db, project.id, filename, source_type)
     if doc:
         doc.status = status
         doc.mime_type = mime_type or doc.mime_type
         doc.extension = extension or doc.extension
         return doc
 
-    doc = Document(
+    return await document_repository.create_document(
+        db,
         id=str(uuid.uuid4()),
         project_id=project.id,
         filename=filename,
@@ -178,9 +166,6 @@ async def _get_or_create_document(
         status=status,
         created_by=created_by,
     )
-    db.add(doc)
-    await db.flush()
-    return doc
 
 
 async def _add_document_version(
@@ -195,13 +180,12 @@ async def _add_document_version(
     status: str = "indexed",
     error_message: str | None = None,
 ) -> DocumentVersion:
-    existing = await db.execute(
-        select(DocumentVersion).where(
-            DocumentVersion.document_id == document.id,
-            DocumentVersion.content_hash == content_hash,
-        )
+    existing = await version_repository.get_version_by_content_hash(
+        db,
+        document.id,
+        content_hash,
     )
-    if existing.scalar_one_or_none():
+    if existing:
         raise HTTPException(409, "This document content was already uploaded")
 
     version_number = await _next_version_number(db, document.id)
@@ -212,7 +196,8 @@ async def _add_document_version(
         filename=filename,
         source_type=source_type,
     )
-    version = DocumentVersion(
+    version = await version_repository.create_document_version(
+        db,
         id=str(uuid.uuid4()),
         document_id=document.id,
         version_number=version_number,
@@ -226,21 +211,18 @@ async def _add_document_version(
         status=status,
         error_message=error_message,
     )
-    db.add(version)
-    await db.flush()
-    document.current_version_id = version.id
-    document.status = status
+    await document_repository.set_current_version(db, document.id, version.id)
+    await document_repository.update_document_status(db, document.id, status)
     return version
 
 
 async def _ensure_new_content(db: AsyncSession, document_id: str, content_hash: str) -> None:
-    existing = await db.execute(
-        select(DocumentVersion.id).where(
-            DocumentVersion.document_id == document_id,
-            DocumentVersion.content_hash == content_hash,
-        )
+    existing = await version_repository.get_version_by_content_hash(
+        db,
+        document_id,
+        content_hash,
     )
-    if existing.scalar_one_or_none():
+    if existing:
         raise HTTPException(409, "This document content was already uploaded")
 
 
@@ -401,8 +383,33 @@ async def upload_multimodal(
         "pages_indexed": num_pages,
         "page_image_urls": page_image_urls,
     }
-@router.post("/file")
+class FileLandingResponse(BaseModel):
+    document_id: str
+    document_version_id: str
+    ingestion_run_id: str
+    status: str
+
+
+class IngestionProgress(BaseModel):
+    bronze: bool
+    silver: bool
+    gold: bool
+    qdrant: bool
+
+
+class IngestionRunResponse(BaseModel):
+    ingestion_run_id: str
+    document_id: str
+    document_version_id: str
+    status: str
+    airflow_dag_run_id: str | None
+    error_message: str | None
+    progress: IngestionProgress
+
+
+@router.post("/file", response_model=FileLandingResponse, status_code=202)
 async def upload_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     project_id: str = Form(...),
     chunker: str = Form(default=get_default_chunker().id),
@@ -413,57 +420,116 @@ async def upload_file(
     _validate_file(file)
     chunker = _validate_text_chunker(chunker)
 
+    filename = file.filename or "upload"
     file_bytes = await _read_upload(file)
     file_hash = _content_hash(file_bytes)
     doc = await _get_or_create_document(
         db=db,
         project=project,
-        filename=file.filename,
+        filename=filename,
         source_type="file",
         created_by=user["user_id"],
         mime_type=file.content_type,
         extension=_extension(file.filename),
+        status="landed",
     )
     await _ensure_new_content(db, doc.id, file_hash)
 
+    version_number = await _next_version_number(db, doc.id)
+    bronze_path, _, _ = _version_paths(
+        project=project,
+        document_id=doc.id,
+        version_number=version_number,
+        filename=filename,
+        source_type="file",
+    )
+    uploaded = False
     try:
-        chunks = await asyncio.to_thread(
-            _ingest_text_document,
+        await asyncio.to_thread(
+            upload_raw_file,
             file_bytes,
-            file.filename,
-            chunker,
-            project_id,
-            doc.id,
-            project.collection,
+            bronze_path,
+            file.content_type,
         )
-        doc, version = await _save_document_version(
-            db=db,
-            project=project,
-            document=doc,
-            filename=file.filename,
-            source_type="file",
+        uploaded = True
+        version = await version_repository.create_document_version(
+            db,
+            id=str(uuid.uuid4()),
+            document_id=doc.id,
+            version_number=version_number,
             content_hash=file_hash,
+            bronze_path=bronze_path,
+            silver_path=None,
+            gold_path=None,
             parser_name=_extension(file.filename).lstrip(".") or "auto",
             chunker_id=chunker,
+            embedding_model=EMBEDDING_MODEL,
+            status="landed",
+            error_message=None,
         )
+        run = await ingestion_repository.create_ingestion_run(
+            db,
+            id=str(uuid.uuid4()),
+            project_id=project.id,
+            document_id=doc.id,
+            document_version_id=version.id,
+            status="landed",
+            created_by=user["user_id"],
+        )
+        await db.commit()
     except Exception:
-        await _cleanup_document_artifacts(doc.id, project.collection, "file")
+        await db.rollback()
+        if uploaded:
+            try:
+                await asyncio.to_thread(delete_raw_file, bronze_path)
+            except Exception:
+                pass
         raise
+
+    if settings.AIRFLOW_API_URL:
+        background_tasks.add_task(enqueue_ingestion, run.id)
 
     return {
         "document_id": doc.id,
         "document_version_id": version.id,
-        "version_number": version.version_number,
-        "project_id": project_id,
-        "collection": project.collection,
-        "filename": file.filename,
-        "source_type": "file",
-        "mime_type": file.content_type,
-        "extension": _extension(file.filename),
-        "status": "indexed",
-        "chunker": chunker,
-        "chunks_indexed": len(chunks),
-        **_debug_payload(chunks),
+        "ingestion_run_id": run.id,
+        "status": "landed",
+    }
+
+
+@router.get("/runs/{ingestion_run_id}", response_model=IngestionRunResponse)
+async def get_ingestion_run_status(
+    ingestion_run_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    run = await ingestion_repository.get_owned_ingestion_run(
+        db,
+        ingestion_run_id,
+        user["user_id"],
+    )
+    if run is None:
+        raise HTTPException(404, "Ingestion run not found")
+
+    version = await version_repository.get_document_version(db, run.document_version_id)
+    if version is None:
+        raise HTTPException(500, "Ingestion run has no document version")
+
+    silver_complete = run.status in {"silver_completed", "gold_completed", "indexed"}
+    gold_complete = run.status in {"gold_completed", "indexed"}
+    return {
+        "ingestion_run_id": run.id,
+        "document_id": run.document_id,
+        "document_version_id": run.document_version_id,
+        "status": run.status,
+        "airflow_dag_run_id": run.airflow_dag_run_id,
+        "error_message": run.error_message,
+        "progress": {
+            "bronze": bool(version.bronze_path),
+            "silver": bool(version.silver_path) or silver_complete,
+            "gold": bool(version.gold_path) or gold_complete,
+            "qdrant": run.status == "indexed",
+        },
     }
 
 

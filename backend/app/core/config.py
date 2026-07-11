@@ -15,6 +15,21 @@ class Settings(BaseSettings):
     R2_BUCKET_NAME: str = ""
     R2_PUBLIC_URL: str = ""
 
+    # MinIO is the durable data lake for Bronze/Silver/Gold artifacts.
+    MINIO_ENDPOINT: str = "http://localhost:9000"
+    MINIO_ACCESS_KEY: str = "ragforge"
+    MINIO_SECRET_KEY: str = "ragforge123"
+    MINIO_BUCKET_BRONZE: str = "bronze"
+    MINIO_BUCKET_SILVER: str = "silver"
+    MINIO_BUCKET_GOLD: str = "gold"
+
+    # Optional Airflow REST trigger. Landed runs remain durable when disabled.
+    AIRFLOW_API_URL: str = ""
+    AIRFLOW_USERNAME: str = "admin"
+    AIRFLOW_PASSWORD: str = "admin"
+    AIRFLOW_INGESTION_DAG_ID: str = "ragforge_ingestion"
+    PIPELINE_SERVICE_TOKEN: str = ""
+
     DEBUG_RETURN_CONTEXT: bool = False
     MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
     MAX_MULTIMODAL_PAGES: int = 50
@@ -42,5 +57,12 @@ class Settings(BaseSettings):
         ]
         if missing:
             raise ValueError(f"Missing R2 settings: {', '.join(missing)}")
+
+    @property
+    def minio_endpoint_url(self) -> str:
+        endpoint = self.MINIO_ENDPOINT.rstrip("/")
+        if not endpoint.startswith(("http://", "https://")):
+            endpoint = f"http://{endpoint}"
+        return endpoint
 
 settings = Settings()
