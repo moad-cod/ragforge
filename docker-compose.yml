@@ -107,6 +107,17 @@ services:
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
       R2_BUCKET_NAME: ${R2_BUCKET_NAME:-}
       R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ragforge
+      MINIO_SECRET_KEY: ragforge123
+      MINIO_BUCKET_BRONZE: bronze
+      MINIO_BUCKET_SILVER: silver
+      MINIO_BUCKET_GOLD: gold
+      AIRFLOW_API_URL: ${AIRFLOW_API_URL:-}
+      AIRFLOW_USERNAME: ${AIRFLOW_USERNAME:-admin}
+      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD:-admin}
+      AIRFLOW_INGESTION_DAG_ID: ${AIRFLOW_INGESTION_DAG_ID:-ragforge_ingestion}
+      PIPELINE_SERVICE_TOKEN: ${PIPELINE_SERVICE_TOKEN:-}
       DEBUG_RETURN_CONTEXT: ${DEBUG_RETURN_CONTEXT:-false}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
       MAX_MULTIMODAL_PAGES: ${MAX_MULTIMODAL_PAGES:-50}
@@ -172,6 +183,7 @@ services:
       AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "2"
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
       AIRFLOW__WEBSERVER__SECRET_KEY: change-me
       AIRFLOW__SCHEDULER__PARSING_PROCESSES: "1"
       AIRFLOW_UID: "50000"
@@ -185,18 +197,22 @@ services:
       MINIO_BUCKET_SILVER: silver
       MINIO_BUCKET_GOLD: gold
       REDIS_URL: redis://redis:6379/0
+      RAGFORGE_API_URL: http://fastapi:8000
+      PIPELINE_SERVICE_TOKEN: ${PIPELINE_SERVICE_TOKEN:-}
+      RAGFORGE_BRONZE_TO_SILVER_CMD: ${RAGFORGE_BRONZE_TO_SILVER_CMD:-}
+      RAGFORGE_SILVER_TO_GOLD_CMD: ${RAGFORGE_SILVER_TO_GOLD_CMD:-}
+      RAGFORGE_UPSERT_QDRANT_CMD: ${RAGFORGE_UPSERT_QDRANT_CMD:-}
       PYTHONPATH: /opt/ragforge/backend
-    user: "0:0"
     command: >
-      bash -lc "
+      bash -c "
       airflow db migrate &&
-      airflow users create
+      (airflow users create
       --username admin
       --password admin
       --firstname Admin
       --lastname User
       --role Admin
-      --email admin@example.com || true
+      --email admin@example.com || true)
       "
     volumes:
       - ./backend:/opt/ragforge/backend
@@ -227,6 +243,7 @@ services:
       AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "2"
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
       AIRFLOW__WEBSERVER__SECRET_KEY: change-me
       AIRFLOW__WEBSERVER__WORKERS: "1"
       AIRFLOW__SCHEDULER__PARSING_PROCESSES: "1"
@@ -241,6 +258,11 @@ services:
       MINIO_BUCKET_SILVER: silver
       MINIO_BUCKET_GOLD: gold
       REDIS_URL: redis://redis:6379/0
+      RAGFORGE_API_URL: http://fastapi:8000
+      PIPELINE_SERVICE_TOKEN: ${PIPELINE_SERVICE_TOKEN:-}
+      RAGFORGE_BRONZE_TO_SILVER_CMD: ${RAGFORGE_BRONZE_TO_SILVER_CMD:-}
+      RAGFORGE_SILVER_TO_GOLD_CMD: ${RAGFORGE_SILVER_TO_GOLD_CMD:-}
+      RAGFORGE_UPSERT_QDRANT_CMD: ${RAGFORGE_UPSERT_QDRANT_CMD:-}
       PYTHONPATH: /opt/ragforge/backend
     command: webserver
     ports:
@@ -272,6 +294,7 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__PARALLELISM: "2"
       AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "2"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
       AIRFLOW__SCHEDULER__PARSING_PROCESSES: "1"
       AIRFLOW_UID: "50000"
@@ -285,6 +308,11 @@ services:
       MINIO_BUCKET_SILVER: silver
       MINIO_BUCKET_GOLD: gold
       REDIS_URL: redis://redis:6379/0
+      RAGFORGE_API_URL: http://fastapi:8000
+      PIPELINE_SERVICE_TOKEN: ${PIPELINE_SERVICE_TOKEN:-}
+      RAGFORGE_BRONZE_TO_SILVER_CMD: ${RAGFORGE_BRONZE_TO_SILVER_CMD:-}
+      RAGFORGE_SILVER_TO_GOLD_CMD: ${RAGFORGE_SILVER_TO_GOLD_CMD:-}
+      RAGFORGE_UPSERT_QDRANT_CMD: ${RAGFORGE_UPSERT_QDRANT_CMD:-}
       PYTHONPATH: /opt/ragforge/backend
     command: scheduler
     volumes:
@@ -299,7 +327,7 @@ services:
   # =========================
 
   spark:
-    image: bitnami/spark:3.5
+    image: spark:3.5.8-java17-python3
     container_name: ragforge_spark
     profiles: ["batch"]
     command: tail -f /dev/null
