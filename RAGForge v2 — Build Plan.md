@@ -815,8 +815,10 @@ postgres
 qdrant
 minio
 redis
-airflow-webserver
+airflow-apiserver
 airflow-scheduler
+airflow-dag-processor
+airflow-triggerer
 spark
 ```
 
