@@ -1,12 +1,14 @@
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
+from app.models import Document, DocumentVersion, Project
 from app.repositories import ingestion_runs as ingestion_repository
+from app.services.chunk_indexing import GoldChunk, index_document_version_chunks
 
 
 router = APIRouter()
@@ -32,6 +34,22 @@ class PipelineStatusUpdate(BaseModel):
     ]
     airflow_dag_run_id: str | None = None
     error_message: str | None = None
+
+
+class GoldChunkPayload(BaseModel):
+    chunk_index: int
+    text: str
+    dense_vector: list[float]
+    content_hash: str | None = None
+    token_count: int | None = None
+    page_start: int | None = None
+    page_end: int | None = None
+    section_title: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class IndexChunksPayload(BaseModel):
+    chunks: list[GoldChunkPayload]
 
 
 def _run_payload(run) -> dict:
@@ -78,3 +96,46 @@ async def update_ingestion_run(
     await db.commit()
     await db.refresh(run)
     return _run_payload(run)
+
+
+@router.post(
+    "/ingestion-runs/{ingestion_run_id}/chunks/index",
+    dependencies=[Depends(require_pipeline_token)],
+)
+async def index_ingestion_run_chunks(
+    ingestion_run_id: str,
+    payload: IndexChunksPayload,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist Gold chunk lineage and idempotently rebuild its Qdrant points."""
+    run = await ingestion_repository.get_ingestion_run(db, ingestion_run_id)
+    if run is None:
+        raise HTTPException(404, "Ingestion run not found")
+    if run.status not in {"gold_completed", "indexed"}:
+        raise HTTPException(409, f"Chunks cannot be indexed from status {run.status!r}")
+
+    project = await db.get(Project, run.project_id)
+    document = await db.get(Document, run.document_id)
+    version = await db.get(DocumentVersion, run.document_version_id)
+    if project is None or document is None or version is None:
+        raise HTTPException(409, "Ingestion run lineage is incomplete")
+
+    try:
+        records = await index_document_version_chunks(
+            db,
+            project=project,
+            document=document,
+            version=version,
+            ingestion_run=run,
+            chunks=[GoldChunk(**chunk.model_dump()) for chunk in payload.chunks],
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    await db.commit()
+    return {
+        "ingestion_run_id": run.id,
+        "document_version_id": version.id,
+        "qdrant_collection": project.qdrant_collection,
+        "chunks_indexed": len(records),
+    }
