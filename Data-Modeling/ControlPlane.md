@@ -1539,6 +1539,202 @@ Before considering the database complete, verify:
 
 ---
 
+# Task 23 — Add Real-Time Progress and Query Streaming
+
+## Goal
+
+Expose truthful, authenticated progress events so the frontend can explain
+long-running ingestion and retrieval work with a ChatGPT-style experience.
+
+The UI may animate the active stage and show elapsed time, but it must not
+invent completion percentages or report a stage as complete before the backend
+has durably crossed that boundary.
+
+---
+
+## Source of Truth
+
+```text
+PostgreSQL = durable operation status and final timestamps
+Redis      = temporary event stream, fan-out, and short replay window
+SSE        = authenticated server-to-client delivery
+```
+
+Redis must never become the only record of ingestion completion or failure. If
+Redis is unavailable or an event expires, the API reconstructs the latest
+ingestion state from PostgreSQL and clients continue through polling or a fresh
+stream snapshot.
+
+---
+
+## Streaming Endpoints
+
+```text
+GET  /ingest/runs/{ingestion_run_id}/events
+POST /rag/query/stream
+```
+
+Both endpoints require the normal user JWT. The ingestion stream verifies that
+the current user owns the ingestion run. Query streaming applies the same
+project and optional document ownership checks as `POST /rag/query`.
+
+Use Server-Sent Events over a streaming `fetch` response. Authentication tokens
+must be sent in headers, not query parameters. WebSockets are not required for
+this one-way event flow.
+
+---
+
+## Common Event Envelope
+
+Every event uses a stable envelope:
+
+```json
+{
+  "event_id": "operation_uuid:sequence",
+  "operation_id": "ingestion_run_or_query_log_uuid",
+  "type": "ingestion.chunking",
+  "stage": "chunking",
+  "message": "Document divided into searchable sections",
+  "timestamp": "2026-07-12T16:30:00Z",
+  "progress": {
+    "current": 18,
+    "total": 42,
+    "unit": "pages"
+  },
+  "data": {}
+}
+```
+
+`progress` is optional. It is emitted only when `current` and `total` come from
+real pipeline measurements. Otherwise the frontend displays a stage indicator
+and elapsed time without a fabricated percentage.
+
+---
+
+## Ingestion Events
+
+```text
+ingestion.snapshot
+ingestion.landed
+ingestion.queued
+ingestion.running
+ingestion.parsing
+ingestion.chunking
+ingestion.embedding
+ingestion.indexing
+ingestion.completed
+ingestion.failed
+ingestion.cancelled
+```
+
+Durable status mapping:
+
+```text
+landed            → ingestion.landed
+queued            → ingestion.queued
+running           → ingestion.running / parsing
+silver_completed  → ingestion.chunking completed
+gold_completed    → ingestion.embedding completed
+indexed           → ingestion.completed
+failed            → ingestion.failed
+cancelled         → ingestion.cancelled
+```
+
+Detailed page/chunk counters may be published between durable boundaries, but
+the corresponding PostgreSQL status is still the recovery source of truth.
+
+---
+
+## Query Events
+
+```text
+query.received
+query.embedding
+query.retrieving
+query.reranking
+query.generating
+query.token
+query.completed
+query.failed
+```
+
+`query.token` carries only the next generated text fragment. `query.completed`
+contains the final model, provider, latency, cache-hit state, and optional
+context allowed by the request. Tasks 19 and 20 persist the final query and
+retrieval trace even if the client disconnects before receiving the last event.
+
+The non-streaming `POST /rag/query` endpoint remains available for simple API
+clients and uses the same retrieval/generation service as the streaming route.
+
+---
+
+## Reconnection and Recovery
+
+* Send an initial `snapshot` event immediately after authorization.
+* Give every event a monotonically increasing sequence within its operation.
+* Accept `Last-Event-ID` when the client reconnects.
+* Replay retained Redis Stream events after that ID when available.
+* Fall back to a PostgreSQL snapshot when replay is unavailable.
+* Send an SSE heartbeat at least every 15 seconds while no work event is emitted.
+* Close the stream after a terminal `completed`, `failed`, or `cancelled` event.
+* Query generation continues to its logging boundary if the browser disconnects.
+
+---
+
+## Frontend Behavior Contract
+
+The frontend may present messages such as:
+
+```text
+Uploading document…
+Saving the original file…
+Extracting and splitting content…
+Creating search embeddings…
+Building the search index…
+Document ready
+```
+
+For queries:
+
+```text
+Understanding your question…
+Searching relevant sections…
+Ranking the best evidence…
+Generating an answer…
+```
+
+Completed stages receive check marks, the active stage may animate, and elapsed
+time is calculated client-side. The UI must show the backend error message and
+retry affordance for failed operations.
+
+---
+
+## Required Tests
+
+* Users cannot subscribe to another tenant's ingestion events.
+* The first ingestion event reflects the current PostgreSQL status.
+* Ingestion events follow valid lifecycle order.
+* Duplicate/replayed event IDs are safe for clients to ignore.
+* Reconnection with `Last-Event-ID` replays available events.
+* Missing Redis history falls back to a durable PostgreSQL snapshot.
+* Query stage events are emitted in order.
+* Generated tokens reconstruct the final persisted answer.
+* Query and retrieval logs are completed after client disconnect.
+* Failed ingestion and query operations emit one terminal failure event.
+* Heartbeats keep long-running streams open without changing operation status.
+
+### Acceptance Criteria
+
+* The frontend can display real ingestion stages without guessing state.
+* Query answers stream token by token.
+* Refreshing or reconnecting does not lose durable progress.
+* Redis failure does not erase or corrupt operation status.
+* All streaming endpoints enforce tenant ownership.
+* Streaming and non-streaming query routes share the same business logic.
+* Task 19 query latency and Task 20 retrieval traces remain accurate.
+
+---
+
 # Recommended Implementation Order for AI Agent
 
 Use this order when asking an AI coding agent to build the database:
@@ -1564,6 +1760,7 @@ Use this order when asking an AI coding agent to build the database:
 18. Add retrieval logging.
 19. Add seed data.
 20. Add validation tests.
+21. Add authenticated real-time progress and query streaming.
 ```
 
 ---
@@ -1601,5 +1798,6 @@ Because RAGForge v2 needs production-style capabilities:
 * Retrieval debugging
 * Multi-model embedding comparison
 * Agentic RAG observability
+* Real-time ingestion and answer progress
 
 The final database should support both Data Engineering and AI Engineering use cases while remaining clean, scalable, and production-ready.
