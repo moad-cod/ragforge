@@ -51,6 +51,14 @@ class RAGForgeControlPlane:
             },
         )
 
+    def index_chunks(self, ingestion_run_id: str, chunks: list[dict]) -> dict:
+        """Send embedded Gold chunks through the durable indexing boundary."""
+        return self._request(
+            "POST",
+            f"/internal/pipeline/ingestion-runs/{ingestion_run_id}/chunks/index",
+            {"chunks": chunks},
+        )
+
 
 def ingestion_run_id_from_context(context: dict) -> str:
     ingestion_run_id = (context["dag_run"].conf or {}).get("ingestion_run_id")
