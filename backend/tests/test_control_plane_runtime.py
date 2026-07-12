@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, Mock, patch
 from fastapi import BackgroundTasks, HTTPException
 
 from app.api.ingest import get_ingestion_run_status, upload_file
-from app.api.internal_pipeline import require_pipeline_token
+from app.api.internal_pipeline import (
+    GoldChunkPayload,
+    IndexChunksPayload,
+    index_ingestion_run_chunks,
+    require_pipeline_token,
+)
 from app.core.config import settings
 from app.models import Document, DocumentVersion, IngestionRun
 from app.repositories.ingestion_runs import update_ingestion_status
@@ -144,6 +149,58 @@ class ControlPlaneRuntimeTests(unittest.IsolatedAsyncioTestCase):
     def test_bronze_database_path_maps_to_bucket_object_key(self):
         with patch.object(settings, "MINIO_BUCKET_BRONZE", "bronze"):
             self.assertEqual(object_key("bronze/org_id=x/raw/file.txt"), "org_id=x/raw/file.txt")
+
+    async def test_pipeline_can_index_gold_chunks_for_an_ingestion_run(self):
+        run = SimpleNamespace(
+            id="run-id",
+            project_id="project-id",
+            document_id="document-id",
+            document_version_id="version-id",
+            status="gold_completed",
+        )
+        project = SimpleNamespace(id="project-id", qdrant_collection="project_collection")
+        document = SimpleNamespace(id="document-id")
+        version = SimpleNamespace(id="version-id")
+        db = SimpleNamespace(get=AsyncMock(), commit=AsyncMock())
+
+        async def get_model(model, _identifier):
+            from app.models import Document as DocumentModel
+            from app.models import DocumentVersion as VersionModel
+            from app.models import Project as ProjectModel
+
+            return {
+                ProjectModel: project,
+                DocumentModel: document,
+                VersionModel: version,
+            }[model]
+
+        db.get.side_effect = get_model
+        payload = IndexChunksPayload(
+            chunks=[
+                GoldChunkPayload(
+                    chunk_index=0,
+                    text="Durable chunk",
+                    dense_vector=[0.1, 0.2],
+                )
+            ]
+        )
+        with (
+            patch(
+                "app.api.internal_pipeline.ingestion_repository.get_ingestion_run",
+                AsyncMock(return_value=run),
+            ),
+            patch(
+                "app.api.internal_pipeline.index_document_version_chunks",
+                AsyncMock(return_value=[SimpleNamespace(id="chunk-id")]),
+            ) as index_chunks,
+        ):
+            response = await index_ingestion_run_chunks("run-id", payload, db)
+
+        self.assertEqual(response["chunks_indexed"], 1)
+        self.assertEqual(response["qdrant_collection"], "project_collection")
+        self.assertEqual(index_chunks.await_args.kwargs["version"], version)
+        self.assertEqual(index_chunks.await_args.kwargs["chunks"][0].chunk_index, 0)
+        db.commit.assert_awaited_once()
 
 
 if __name__ == "__main__":
