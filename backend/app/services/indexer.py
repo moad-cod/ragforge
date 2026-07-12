@@ -13,10 +13,11 @@ qdrant = QdrantClient(
     check_compatibility=False,
 )
 
-def ensure_collection(collection: str, vector_size: int = 384):
-    existing = [c.name for c in qdrant.get_collections().collections]
+def ensure_collection(collection: str, vector_size: int = 384, client: QdrantClient | None = None):
+    client = client or qdrant
+    existing = [c.name for c in client.get_collections().collections]
     if collection not in existing:
-        qdrant.create_collection(
+        client.create_collection(
             collection_name=collection,
             vectors_config={"dense": VectorParams(size=vector_size, distance=Distance.COSINE)},
             sparse_vectors_config={"sparse": SparseVectorParams()},
