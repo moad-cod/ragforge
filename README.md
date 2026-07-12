@@ -142,6 +142,38 @@ uvicorn app.main:app --reload
 
 API docs: `http://localhost:8000/docs`
 
+### 6. Start Airflow 3.3 and Spark (optional)
+
+The `batch` profile runs the Airflow 3 API server/new UI, scheduler, DAG
+processor, triggerer, metadata database, and Spark. In the root `.env`, set:
+
+```dotenv
+AIRFLOW_API_URL=http://airflow-apiserver:8080
+AIRFLOW_USERNAME=admin
+AIRFLOW_PASSWORD=admin
+AIRFLOW_API_JWT_SECRET=replace-with-a-random-airflow-jwt-secret
+PIPELINE_SERVICE_TOKEN=replace-with-a-random-internal-token
+```
+
+Then start the profile:
+
+```bash
+docker compose --profile batch up -d
+```
+
+Open the Airflow UI at `http://localhost:8080` and sign in with the configured
+Airflow username and password. Check initialization and scheduler health with:
+
+```bash
+docker compose --profile batch ps
+docker compose logs airflow-init airflow-apiserver airflow-scheduler airflow-dag-processor
+```
+
+`airflow-init` exiting successfully is expected. Existing Airflow 2 development
+metadata may need a fresh `airflow_postgres_data` volume if its major-version
+migration is not usable; this does not affect the main RAGForge PostgreSQL
+volume.
+
 ## API Reference
 
 ### Health
@@ -215,7 +247,7 @@ chunker    fixed_size | paragraph | sentence | semantic | hierarchical | late_ch
 }
 ```
 
-Set `AIRFLOW_API_URL` and `PIPELINE_SERVICE_TOKEN` to enqueue landed runs automatically. The Airflow DAG also requires the three data-plane command variables documented in `.env.example`; missing commands fail the run instead of marking incomplete processing as successful.
+Set `AIRFLOW_API_URL=http://airflow-apiserver:8080` and `PIPELINE_SERVICE_TOKEN` to enqueue landed runs automatically. FastAPI obtains an Airflow JWT and uses the public Airflow 3 `/api/v2` endpoint. The DAG also requires the three data-plane command variables documented in `.env.example`; missing commands fail the run instead of marking incomplete processing as successful.
 
 ### Query
 
