@@ -11,6 +11,21 @@ async def bulk_insert_chunks(db: AsyncSession, chunks: list[Chunk | dict]) -> li
     return records
 
 
+async def replace_chunks_for_document_version(
+    db: AsyncSession,
+    document_version_id: str,
+    chunks: list[Chunk | dict],
+) -> list[Chunk]:
+    """Replace one version's chunk lineage without committing the transaction.
+
+    Qdrant point and PostgreSQL chunk IDs are deterministic, so a failed or
+    repeated indexing job can safely call this operation again.
+    """
+    await db.execute(delete(Chunk).where(Chunk.document_version_id == document_version_id))
+    await db.flush()
+    return await bulk_insert_chunks(db, chunks)
+
+
 async def get_chunks_by_document_version(db: AsyncSession, document_version_id: str) -> list[Chunk]:
     result = await db.execute(
         select(Chunk)
