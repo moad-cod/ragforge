@@ -4,8 +4,7 @@ import os
 import shlex
 import subprocess
 
-from airflow.decorators import dag, task
-from airflow.operators.python import get_current_context
+from airflow.sdk import dag, get_current_context, task
 
 from ragforge_control_plane import (
     RAGForgeControlPlane,
