@@ -623,9 +623,9 @@ chunks
 - created_at timestamp not null
 ```
 
-### Qdrant Point ID Rule
+### Qdrant Point Lineage Rule
 
-Use deterministic point IDs:
+Build the deterministic readable lineage key:
 
 ```text
 {document_version_id}:{chunk_index}
@@ -637,7 +637,9 @@ Example:
 550e8400-e29b-41d4-a716-446655440000:12
 ```
 
-This makes Qdrant indexing:
+Store this value as `lineage_id` in the Qdrant payload and derive the actual
+Qdrant/PostgreSQL point ID as UUIDv5, because Qdrant point IDs must be unsigned
+integers or UUIDs. This makes Qdrant indexing:
 
 * Idempotent
 * Rebuildable
@@ -1358,11 +1360,16 @@ Ensure every indexed chunk has a stable Qdrant point ID.
 
 ---
 
-## Qdrant Point ID Format
+## Qdrant Point Lineage Format
 
 ```text
 {document_version_id}:{chunk_index}
 ```
+
+Qdrant accepts unsigned integers or UUIDs as point IDs, so this readable value
+is stored as `lineage_id` in the point payload. The actual `qdrant_point_id`
+stored in Qdrant and PostgreSQL is a deterministic UUIDv5 derived from this
+lineage value. This preserves idempotency while using a Qdrant-valid ID.
 
 ## Qdrant Payload
 
