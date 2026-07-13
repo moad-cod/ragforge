@@ -17,6 +17,7 @@ RAGForge is a FastAPI SaaS backend for multi-tenant Retrieval-Augmented Generati
 - Development reset and smoke-test scripts.
 - Alembic-managed PostgreSQL control-plane schema and repository layer.
 - Asynchronous file landing in MinIO Bronze with durable ingestion-run status.
+- Durable query and ranked retrieval observability with best-effort Redis caching.
 
 ## Tech Stack
 

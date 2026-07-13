@@ -215,9 +215,9 @@ Airflow:    pipeline scheduling; ingestion_runs.airflow_dag_run_id provides trac
 
 Status validation is enforced twice: SQLAlchemy rejects invalid values before persistence, and PostgreSQL check constraints protect writes from any other client. Canonical values live in `backend/app/models/statuses.py`.
 
-## Control-Plane Runtime (Tasks 12–18)
+## Control-Plane Runtime (Tasks 12–20)
 
-Tasks 12–18 add the migration and first runtime consumers of the control-plane schema:
+Tasks 12–20 add the migration and runtime consumers of the control-plane schema:
 
 | Task | Implemented result |
 |---|---|
@@ -228,12 +228,14 @@ Tasks 12–18 add the migration and first runtime consumers of the control-plane
 | 16 | `GET /ingest/runs/{ingestion_run_id}` reports durable status and Bronze/Silver/Gold/Qdrant progress |
 | 17 | Authenticated internal pipeline API, optional Airflow REST enqueue, Airflow client plugin, and ingestion DAG status boundaries |
 | 18 | Deterministic PostgreSQL/Qdrant chunk lineage, complete tenant/version payloads, idempotent version rebuilds, and an authenticated Gold-chunk indexing boundary |
+| 19 | Normalized question hashing, best-effort Redis response caching, and durable provider/model/latency/cache/route query logs |
+| 20 | Structured retrieval hits and durable rank, Qdrant score, optional rerank score, strategy, chunk lineage, and answer-usage traces |
 
 The repository layer owns reusable database operations and does not commit implicitly. API routes and pipeline boundaries control transactions, allowing multi-row document/version/run creation to remain atomic.
 
 Airflow talks to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally keeps the application database runtime out of Airflow 3.3 task processes. The internal API delegates every write to the same ingestion repository used elsewhere. FastAPI authenticates through Airflow's `/auth/token` endpoint and triggers DAG runs through the Airflow 3 public `/api/v2` API.
 
-The `ragforge_ingestion` DAG exposes the Task 17 sequence (`validate_bronze`, `bronze_to_silver_spark`, `silver_to_gold_embed`, `upsert_qdrant`, `update_postgres_status`). Transformation commands are configured through environment variables and receive `{ingestion_run_id}`; a missing command fails the run instead of falsely advancing its durable status. The Task 18 indexing boundary accepts embedded Gold chunks at `POST /internal/pipeline/ingestion-runs/{id}/chunks/index`, rebuilds that version's Qdrant points, and atomically replaces its PostgreSQL chunk rows. Query/retrieval logging remain Tasks 19–20.
+The `ragforge_ingestion` DAG exposes the Task 17 sequence (`validate_bronze`, `bronze_to_silver_spark`, `silver_to_gold_embed`, `upsert_qdrant`, `update_postgres_status`). Transformation commands are configured through environment variables and receive `{ingestion_run_id}`; a missing command fails the run instead of falsely advancing its durable status. The Task 18 indexing boundary accepts embedded Gold chunks at `POST /internal/pipeline/ingestion-runs/{id}/chunks/index`, rebuilds that version's Qdrant points, and atomically replaces its PostgreSQL chunk rows.
 
 Qdrant only accepts unsigned integers or UUIDs as point IDs. RAGForge therefore preserves the readable `{document_version_id}:{chunk_index}` key as `lineage_id` in every payload and derives the actual Qdrant/PostgreSQL `qdrant_point_id` deterministically with UUIDv5. Replaying the same Gold artifact produces the same chunk and point IDs; old points for that document version are removed before the rebuilt set is upserted.
 
@@ -304,7 +306,7 @@ Batch profile services, enabled with `--profile batch`, add the Airflow 3.3 API 
 
 ## Requirements Strategy
 
-`backend/requirements.txt` is intentionally a slim default runtime set. It includes FastAPI, SQLAlchemy/asyncpg, Qdrant, FastEmbed, document parsers, auth, OpenAI/Groq clients, and S3/R2 support.
+`backend/requirements.txt` is intentionally a slim default runtime set. It includes FastAPI, SQLAlchemy/asyncpg, Qdrant, FastEmbed, the async Redis client, document parsers, auth, OpenAI/Groq clients, and S3/R2 support.
 
 It intentionally does not include older full frozen-environment dependencies or heavy optional stacks such as PyTorch/CUDA wheels, `sentence-transformers`, `transformers`, `colpali_engine`, LangChain, and evaluation/training packages.
 
@@ -366,13 +368,19 @@ Text RAG query flow:
 
 ```text
 question
+  -> normalize/hash + optional Redis cache lookup
+  -> durable QueryLog
   -> FastEmbed BGE query embedding
   -> Qdrant hybrid dense+sparse search
-  -> optional rerank
+  -> optional rerank with structured scores
+  -> durable RetrievalLog rows
   -> context prompt
   -> Gemini or Groq OpenAI-compatible chat completion
-  -> answer
+  -> mark used chunks + cache response + answer
 ```
+
+Redis cache failures degrade to a normal retrieval/generation request. Cache
+state is recorded in PostgreSQL, which remains the durable source of truth.
 
 Optional query controls:
 
@@ -405,6 +413,8 @@ Core settings:
 - `SECRET_KEY`
 - `QDRANT_URL`
 - `QDRANT_API_KEY`
+- `REDIS_URL`
+- `QUERY_CACHE_TTL_SECONDS`
 - `MAX_UPLOAD_BYTES`
 - `MAX_MULTIMODAL_PAGES`
 - `DEBUG_RETURN_CONTEXT`
