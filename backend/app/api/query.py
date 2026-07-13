@@ -1,22 +1,30 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import Literal
-from app.core.auth import get_current_user
-from app.core.db import get_db
-from app.models.tables import Project, Document
-from app.services.embedder import embed_query
-from app.services.retriever import search
-from app.core.config import settings
-from openai import OpenAI
-from qdrant_client import QdrantClient                           # ← added
-from qdrant_client.models import Filter, FieldCondition, MatchValue  # ← added
 import asyncio
+import time
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException
+from openai import OpenAI
+from pydantic import BaseModel
+from qdrant_client import QdrantClient
+from qdrant_client.models import FieldCondition, Filter, MatchValue
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth import get_current_user
+from app.core.config import settings
+from app.core.db import get_db
+from app.models.tables import Document, Project
+from app.repositories import query_logs as query_log_repository
+from app.repositories import retrieval_logs as retrieval_log_repository
+from app.services.embedder import embed_query
+from app.services.query_cache import cache_key, get_cached_query, set_cached_query
+from app.services.query_observability import normalized_question_hash, retrieval_log_values
+from app.services.retrieval.types import RetrievalHit
+from app.services.retriever import search
 
 router = APIRouter()
 
-qdrant = QdrantClient(                                           # ← added
+qdrant = QdrantClient(
     url=settings.QDRANT_URL,
     api_key=settings.QDRANT_API_KEY or None,
     check_compatibility=False,
@@ -44,6 +52,10 @@ def get_llm_client(provider: str) -> tuple[OpenAI, str]:
     return OpenAI(api_key=config["api_key"](), base_url=config["base_url"]), config["default_model"]
 
 
+def resolve_model(provider: str, requested_model: str | None) -> str:
+    return (requested_model or "").strip() or LLM_CONFIGS[provider]["default_model"]
+
+
 class QueryRequest(BaseModel):
     question: str
     project_id: str
@@ -60,6 +72,7 @@ async def query(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
+    started_at = time.perf_counter()
     result = await db.execute(
         select(Project).where(
             Project.id == request.project_id,
@@ -82,29 +95,117 @@ async def query(
         if not doc_result.scalar_one_or_none():
             raise HTTPException(404, "Document not found in this project")
 
-    query_embedding = await asyncio.to_thread(embed_query, request.question)
-
-    contexts = await asyncio.to_thread(
-        search,
-        embedding=query_embedding,
+    question_hash = normalized_question_hash(request.question)
+    model = resolve_model(request.provider, request.model)
+    response_cache_key = cache_key(
         project_id=request.project_id,
-        collection=project.collection,
-        query_text=request.question,
+        normalized_question_hash=question_hash,
+        provider=request.provider,
+        model=model,
         document_id=request.document_id,
         use_parent_context=request.use_parent_context,
     )
+    cached = await get_cached_query(response_cache_key)
+    try:
+        cached_hits = [RetrievalHit.from_cache_dict(value) for value in cached["hits"]] if cached else []
+        cached_answer = cached["answer"] if cached and isinstance(cached["answer"], str) else None
+        if cached and cached_answer is None:
+            raise ValueError("Cached answer is not a string")
+    except (KeyError, TypeError, ValueError):
+        cached = None
+        cached_hits = []
+        cached_answer = None
 
-    if not contexts:
-        return {
-            "question": request.question,
-            "project_id": request.project_id,
-            "collection": project.collection,
-            "answer": "No documents found for this project.",
-            **({"retrieved_chunks": []} if request.include_context or settings.DEBUG_RETURN_CONTEXT else {}),
-        }
+    query_log = await query_log_repository.create_query_log(
+        db,
+        project_id=request.project_id,
+        user_id=user["user_id"],
+        question=request.question,
+        normalized_question_hash=question_hash,
+        provider=request.provider,
+        model=model,
+        cache_hit=bool(cached),
+        route="rag",
+    )
+    finalized = False
 
-    context_text = "\n\n---\n\n".join(contexts)
-    prompt = f"""Answer the question using ONLY the context below.
+    async def finalize(cache_hit: bool) -> None:
+        nonlocal finalized
+        latency_ms = max(0, round((time.perf_counter() - started_at) * 1000))
+        await query_log_repository.finish_query_log(
+            db,
+            query_log,
+            latency_ms=latency_ms,
+            cache_hit=cache_hit,
+            route="rag",
+        )
+        await db.commit()
+        finalized = True
+
+    try:
+        if cached and cached_answer is not None:
+            for hit in cached_hits:
+                hit.used_in_answer = True
+            await retrieval_log_repository.bulk_insert_retrieval_logs(
+                db,
+                retrieval_log_values(query_log.id, cached_hits, from_cache=True),
+            )
+            await finalize(cache_hit=True)
+            contexts = [hit.text for hit in cached_hits]
+            return {
+                "query_log_id": query_log.id,
+                "question": request.question,
+                "project_id": request.project_id,
+                "collection": project.collection,
+                "provider": request.provider,
+                "model": model,
+                "use_parent_context": request.use_parent_context,
+                "cache_hit": True,
+                "answer": cached_answer,
+                **(
+                    {"retrieved_chunks": contexts}
+                    if request.include_context or settings.DEBUG_RETURN_CONTEXT
+                    else {}
+                ),
+            }
+
+        query_embedding = await asyncio.to_thread(embed_query, request.question)
+        hits = await asyncio.to_thread(
+            search,
+            embedding=query_embedding,
+            project_id=request.project_id,
+            collection=project.collection,
+            query_text=request.question,
+            document_id=request.document_id,
+            use_parent_context=request.use_parent_context,
+        )
+
+        retrieval_logs = await retrieval_log_repository.bulk_insert_retrieval_logs(
+            db,
+            retrieval_log_values(query_log.id, hits),
+        )
+
+        if not hits:
+            await finalize(cache_hit=False)
+            return {
+                "query_log_id": query_log.id,
+                "question": request.question,
+                "project_id": request.project_id,
+                "collection": project.collection,
+                "provider": request.provider,
+                "model": model,
+                "cache_hit": False,
+                "answer": "No documents found for this project.",
+                **(
+                    {"retrieved_chunks": []}
+                    if request.include_context or settings.DEBUG_RETURN_CONTEXT
+                    else {}
+                ),
+            }
+
+        contexts = [hit.text for hit in hits]
+        context_text = "\n\n---\n\n".join(contexts)
+        prompt = f"""Answer the question using ONLY the context below.
 If the answer isn't in the context, say "I don't know based on the provided documents."
 
 Context:
@@ -112,26 +213,50 @@ Context:
 
 Question: {request.question}"""
 
-    client, default_model = get_llm_client(request.provider)
-    model = (request.model or "").strip() or default_model
+        client, _default_model = get_llm_client(request.provider)
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2048,
+        )
+        answer = response.choices[0].message.content or ""
 
-    response = await asyncio.to_thread(
-        client.chat.completions.create,
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=2048,
-    )
+        for hit in hits:
+            hit.used_in_answer = True
+        await retrieval_log_repository.mark_retrieval_logs_used(db, retrieval_logs)
+        await finalize(cache_hit=False)
+        await set_cached_query(
+            response_cache_key,
+            {
+                "answer": answer,
+                "hits": [hit.to_cache_dict() for hit in hits],
+            },
+        )
 
-    return {
-        "question": request.question,
-        "project_id": request.project_id,
-        "collection": project.collection,
-        "provider": request.provider,
-        "model": model,
-        "use_parent_context": request.use_parent_context,
-        "answer": response.choices[0].message.content,
-        **({"retrieved_chunks": contexts} if request.include_context or settings.DEBUG_RETURN_CONTEXT else {}),
-    }
+        return {
+            "query_log_id": query_log.id,
+            "question": request.question,
+            "project_id": request.project_id,
+            "collection": project.collection,
+            "provider": request.provider,
+            "model": model,
+            "use_parent_context": request.use_parent_context,
+            "cache_hit": False,
+            "answer": answer,
+            **(
+                {"retrieved_chunks": contexts}
+                if request.include_context or settings.DEBUG_RETURN_CONTEXT
+                else {}
+            ),
+        }
+    except Exception:
+        if not finalized:
+            try:
+                await finalize(cache_hit=False)
+            except Exception:
+                await db.rollback()
+        raise
 
 
 @router.post("/multimodal-query")
