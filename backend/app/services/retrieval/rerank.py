@@ -17,12 +17,21 @@ def _get_reranker():
 
 def rerank(query: str, documents: list[str], top_n: int = 5) -> list[int]:
     """Returns indices of `documents` sorted best-first, truncated to top_n."""
+    return [index for index, _score in rerank_with_scores(query, documents, top_n)]
+
+
+def rerank_with_scores(
+    query: str,
+    documents: list[str],
+    top_n: int = 5,
+) -> list[tuple[int, float | None]]:
+    """Return ranked source indices and CrossEncoder scores when available."""
     if not documents:
         return []
     reranker = _get_reranker()
     if reranker is None:
-        return list(range(min(top_n, len(documents))))
+        return [(index, None) for index in range(min(top_n, len(documents)))]
     pairs = [(query, doc) for doc in documents]
     scores = reranker.predict(pairs)
     ranked_indices = sorted(range(len(documents)), key=lambda i: scores[i], reverse=True)
-    return ranked_indices[:top_n]
+    return [(index, float(scores[index])) for index in ranked_indices[:top_n]]
