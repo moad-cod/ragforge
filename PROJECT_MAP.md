@@ -92,11 +92,15 @@ backend/
       storage.py
       bronze_storage.py
       airflow.py
+      event_stream.py
+      query_cache.py
+      query_observability.py
       pipeline_status.py
   alembic/
     env.py
     versions/
       20260711_0001_create_ragforge_v2_database_schema.py
+      20260713_0002_add_query_answer.py
   airflow/
     dags/ragforge_ingestion.py
     plugins/ragforge_control_plane.py
@@ -174,7 +178,7 @@ EmbeddingRun
   belongs to Project and DocumentVersion
 
 QueryLog
-  id, project_id, user_id, question, normalized_question_hash
+  id, project_id, user_id, question, answer, normalized_question_hash
   provider, model, latency_ms, cache_hit, route, evaluation scores
   belongs to Project and User
 
@@ -215,10 +219,10 @@ Airflow:    pipeline scheduling; ingestion_runs.airflow_dag_run_id provides trac
 
 Status validation is enforced twice: SQLAlchemy rejects invalid values before persistence, and PostgreSQL check constraints protect writes from any other client. Canonical values live in `backend/app/models/statuses.py`.
 
-## Control-Plane Runtime (Tasks 12–22)
+## Control-Plane Runtime (Tasks 12–23)
 
-Tasks 12–22 add the migration, runtime consumers, deterministic seed data, and
-database-level validation of the control-plane schema:
+Tasks 12–23 add the migration, runtime consumers, deterministic seed data,
+database validation, and authenticated real-time delivery:
 
 | Task | Implemented result |
 |---|---|
@@ -233,6 +237,7 @@ database-level validation of the control-plane schema:
 | 20 | Structured retrieval hits and durable rank, Qdrant score, optional rerank score, strategy, chunk lineage, and answer-usage traces |
 | 21 | Idempotent namespaced seed data plus real PostgreSQL relationship, lifecycle, uniqueness, foreign-key, and query-lineage tests |
 | 22 | Executable schema introspection for required tables, foreign keys, unique/check constraints, indexes, and Alembic upgrade/rollback validation |
+| 23 | Authenticated ingestion SSE snapshots/replay, Redis Stream fan-out with PostgreSQL recovery, shared streaming/non-streaming RAG execution, durable answers, and token/stage events |
 
 The repository layer owns reusable database operations and does not commit implicitly. API routes and pipeline boundaries control transactions, allowing multi-row document/version/run creation to remain atomic.
 
@@ -280,8 +285,8 @@ New code can also import from `app.models`.
 | Projects | `POST /projects/`, `GET /projects/`, `GET /projects/{project_id}`, `PATCH /projects/{project_id}`, `DELETE /projects/{project_id}` |
 | Documents | `GET /documents/?project_id=...`, `GET /documents/{document_id}`, `GET /documents/{document_id}/versions`, `DELETE /documents/{document_id}` |
 | Chunkers | `GET /chunkers` |
-| Ingest | `POST /ingest/file` (HTTP 202 Bronze landing), `GET /ingest/runs/{ingestion_run_id}`, `POST /ingest/url`, `POST /ingest/gdrive`, `POST /ingest/multimodal` |
-| Query | `POST /rag/query`, `POST /rag/multimodal-query` |
+| Ingest | `POST /ingest/file` (HTTP 202 Bronze landing), `GET /ingest/runs/{ingestion_run_id}`, `GET /ingest/runs/{ingestion_run_id}/events` (SSE), `POST /ingest/url`, `POST /ingest/gdrive`, `POST /ingest/multimodal` |
+| Query | `POST /rag/query`, `POST /rag/query/stream` (SSE), `POST /rag/multimodal-query` |
 | Pipeline internal | `GET/PATCH /internal/pipeline/ingestion-runs/{ingestion_run_id}` and `POST /internal/pipeline/ingestion-runs/{ingestion_run_id}/chunks/index` with service token |
 
 `DocumentVersion` is intentionally exposed through `GET /documents/{document_id}/versions`, not as a separate top-level `/document-versions` router. That keeps versions scoped under their parent document and enforces document ownership before listing version metadata.
@@ -296,7 +301,7 @@ Default `docker compose up -d --build` services:
 | `qdrant` | Vector database for dense, sparse, and optional multivector search |
 | `minio` | Local S3-compatible object storage |
 | `minio-init` | Creates local buckets through `scripts/init_minio.sh` |
-| `redis` | Local Redis service reserved for async/batch workflows |
+| `redis` | Best-effort query cache plus short-lived ingestion event replay/fan-out |
 | `fastapi` | Backend app built from `backend/Dockerfile` |
 
 The FastAPI container uses `/app` as its working directory, mounts `./backend:/app` for development reloads, installs `backend/requirements.txt`, and starts with:
@@ -379,11 +384,19 @@ question
   -> durable RetrievalLog rows
   -> context prompt
   -> Gemini or Groq OpenAI-compatible chat completion
-  -> mark used chunks + cache response + answer
+  -> optional stage/token SSE events
+  -> mark used chunks + persist/cache response + answer
 ```
 
 Redis cache failures degrade to a normal retrieval/generation request. Cache
 state is recorded in PostgreSQL, which remains the durable source of truth.
+
+Task 23 uses Redis Streams only as a short replay/fan-out layer. Every ingestion
+subscription begins with the current PostgreSQL snapshot, accepts
+`Last-Event-ID`, filters duplicate sequences, emits heartbeats, and falls back
+to durable polling when Redis is unavailable. Streaming queries run in an
+independent database session so client disconnects do not cancel query and
+retrieval logging.
 
 Optional query controls:
 
@@ -421,6 +434,10 @@ Core settings:
 - `MAX_UPLOAD_BYTES`
 - `MAX_MULTIMODAL_PAGES`
 - `DEBUG_RETURN_CONTEXT`
+- `EVENT_STREAM_MAXLEN`
+- `EVENT_STREAM_TTL_SECONDS`
+- `SSE_HEARTBEAT_SECONDS`
+- `SSE_POLL_SECONDS`
 
 Optional provider settings:
 
@@ -451,6 +468,7 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 | `backend/tests/test_chunkers_api.py` | `/chunkers` and invalid chunker API tests when FastAPI is installed |
 | `backend/tests/test_control_plane_models.py` | Tasks 4–11 table, foreign-key, status, uniqueness, and composite-index tests |
 | `backend/tests/test_control_plane_database.py` | Tasks 21–22 isolated PostgreSQL seed, constraint, relationship, lifecycle, schema, and migration tests |
+| `backend/tests/test_realtime_streaming.py` | Task 23 SSE, replay, fallback, ownership, token, disconnect, heartbeat, and optional live Redis tests |
 | `backend/tests/evaluate.py` | Evaluation helper for local experiments |
 
 ## Current Design Notes
