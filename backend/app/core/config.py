@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     MINIO_BUCKET_SILVER: str = "silver"
     MINIO_BUCKET_GOLD: str = "gold"
 
+    # Redis is an optional query-response cache. PostgreSQL remains durable.
+    REDIS_URL: str = ""
+    QUERY_CACHE_TTL_SECONDS: int = 300
+
     # Optional Airflow REST trigger. Landed runs remain durable when disabled.
     AIRFLOW_API_URL: str = ""
     AIRFLOW_USERNAME: str = "admin"
