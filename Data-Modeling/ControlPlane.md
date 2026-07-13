@@ -776,6 +776,7 @@ query_logs
 - project_id UUID not null
 - user_id UUID not null
 - question text not null
+- answer text nullable
 - normalized_question_hash text
 - provider text
 - model text
@@ -791,6 +792,7 @@ query_logs
 
 ```text
 question = original user question
+answer = final durable answer for completed classic or streaming queries
 normalized_question_hash = stable hash used for cache lookup
 provider = llm provider, example: gemini, groq
 model = llm model name
@@ -1754,6 +1756,27 @@ retry affordance for failed operations.
 * All streaming endpoints enforce tenant ownership.
 * Streaming and non-streaming query routes share the same business logic.
 * Task 19 query latency and Task 20 retrieval traces remain accurate.
+
+## Implementation Status — Complete (2026-07-13)
+
+`GET /ingest/runs/{ingestion_run_id}/events` sends an authenticated PostgreSQL
+snapshot first, replays newer Redis Stream events after `Last-Event-ID`, polls
+durable state when replay is missing, emits idle heartbeats, and closes on a
+terminal status. Upload, Airflow enqueue, and internal pipeline transitions all
+publish best-effort events after their database transaction commits.
+
+`POST /rag/query/stream` and `POST /rag/query` call the same query executor.
+The streaming route emits ordered stage events and model fragments, while its
+worker owns an independent database session so disconnecting the browser does
+not cancel query/retrieval logging. Revision `20260713_0002` adds the durable
+`query_logs.answer` column used to verify that streamed tokens reconstruct the
+stored final answer.
+
+```bash
+cd backend
+python -m unittest tests.test_realtime_streaming -v
+RUN_REDIS_TESTS=1 python -m unittest tests.test_realtime_streaming.RedisEventIntegrationTests -v
+```
 
 ---
 
