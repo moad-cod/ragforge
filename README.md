@@ -18,6 +18,7 @@ RAGForge is a FastAPI SaaS backend for multi-tenant Retrieval-Augmented Generati
 - Alembic-managed PostgreSQL control-plane schema and repository layer.
 - Asynchronous file landing in MinIO Bronze with durable ingestion-run status.
 - Durable query and ranked retrieval observability with best-effort Redis caching.
+- Authenticated ingestion progress SSE and token-by-token RAG query streaming.
 
 ## Tech Stack
 
@@ -76,7 +77,7 @@ PROJECT_MAP.md         # architecture and design map
 docker compose up -d
 ```
 
-This starts PostgreSQL on `5432` and Qdrant on `6333`.
+This starts PostgreSQL, Qdrant, MinIO, Redis, and the FastAPI development app.
 
 ### 2. Install backend dependencies
 
@@ -97,6 +98,13 @@ SECRET_KEY=replace-with-a-random-secret
 
 QDRANT_URL=http://localhost:6333
 QDRANT_API_KEY=
+
+REDIS_URL=redis://localhost:6379/0
+QUERY_CACHE_TTL_SECONDS=300
+EVENT_STREAM_MAXLEN=512
+EVENT_STREAM_TTL_SECONDS=3600
+SSE_HEARTBEAT_SECONDS=15
+SSE_POLL_SECONDS=1
 
 GEMINI_API_KEY=
 GROQ_API_KEY=
@@ -234,6 +242,7 @@ volume.
 |---|---|---|
 | POST | `/ingest/file` | Land a file in Bronze and return an ingestion run (HTTP 202) |
 | GET | `/ingest/runs/{ingestion_run_id}` | Read durable Bronze/Silver/Gold/Qdrant progress |
+| GET | `/ingest/runs/{ingestion_run_id}/events` | Stream durable progress snapshots and replayable SSE events |
 | POST | `/ingest/url` | Scrape and index a public URL |
 | POST | `/ingest/gdrive` | Import and index a Google Drive file |
 | POST | `/ingest/multimodal` | Render, embed, upload, and index PDF pages |
@@ -266,6 +275,7 @@ Set `AIRFLOW_API_URL=http://airflow-apiserver:8080` and `PIPELINE_SERVICE_TOKEN`
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/rag/query` | Text RAG query |
+| POST | `/rag/query/stream` | Stream RAG stages and answer tokens over SSE |
 | POST | `/rag/multimodal-query` | Page-image multimodal query |
 
 Text query body:
@@ -333,7 +343,22 @@ curl -s -X POST "http://localhost:8000/rag/query" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"question\":\"What is in the documents?\",\"project_id\":\"$PROJECT_ID\",\"provider\":\"gemini\"}"
+
+# Stream ingestion progress (use the ingestion_run_id returned by /ingest/file)
+curl -N "http://localhost:8000/ingest/runs/$INGESTION_RUN_ID/events" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Stream query stages and generated tokens
+curl -N -X POST "http://localhost:8000/rag/query/stream" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"question\":\"What is in the documents?\",\"project_id\":\"$PROJECT_ID\",\"provider\":\"gemini\"}"
 ```
+
+Browser clients should use streaming `fetch` so the JWT remains in the
+`Authorization` header. Ingestion reconnects may send `Last-Event-ID`; Redis
+replays retained events when available, otherwise the first PostgreSQL
+snapshot remains authoritative.
 
 ## Data Isolation
 
@@ -377,6 +402,14 @@ The suite derives an isolated database named `ragforge_test` from
 `DATABASE_URL`, performs a full Alembic upgrade/rollback/upgrade cycle, tests
 the seed graph and database constraints, then rolls the test schema back. Set
 `TEST_DATABASE_URL` explicitly when a different `_test` database is required.
+
+Run the Task 23 streaming tests and optional live Redis replay test:
+
+```bash
+cd backend
+python -m unittest tests.test_realtime_streaming -v
+RUN_REDIS_TESTS=1 python -m unittest tests.test_realtime_streaming.RedisEventIntegrationTests -v
+```
 
 Run the full smoke test from the project root:
 
