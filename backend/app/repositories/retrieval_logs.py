@@ -24,3 +24,12 @@ async def get_retrieval_logs_for_query(db: AsyncSession, query_log_id: str) -> l
         .order_by(RetrievalLog.rank)
     )
     return list(result.scalars().all())
+
+
+async def mark_retrieval_logs_used(
+    db: AsyncSession,
+    retrieval_logs: list[RetrievalLog],
+) -> None:
+    for retrieval_log in retrieval_logs:
+        retrieval_log.used_in_answer = True
+    await db.flush()

@@ -26,6 +26,21 @@ async def update_query_scores(
     return query_log
 
 
+async def finish_query_log(
+    db: AsyncSession,
+    query_log: QueryLog,
+    *,
+    latency_ms: int,
+    cache_hit: bool,
+    route: str,
+) -> QueryLog:
+    query_log.latency_ms = latency_ms
+    query_log.cache_hit = cache_hit
+    query_log.route = route
+    await db.flush()
+    return query_log
+
+
 async def get_project_query_history(
     db: AsyncSession,
     project_id: str,
