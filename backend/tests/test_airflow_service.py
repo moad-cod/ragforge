@@ -67,6 +67,10 @@ class AirflowServiceTests(unittest.IsolatedAsyncioTestCase):
                 "app.services.airflow.update_ingestion_status",
                 AsyncMock(),
             ) as update_status,
+            patch(
+                "app.services.airflow.publish_ingestion_event",
+                AsyncMock(),
+            ) as publish_event,
         ):
             result = await enqueue_ingestion("run-id")
 
@@ -85,6 +89,11 @@ class AirflowServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(update_status.await_args.args[1], "run-id")
         self.assertEqual(update_status.await_args.args[2], "queued")
         db.commit.assert_awaited_once()
+        publish_event.assert_awaited_once_with(
+            "run-id",
+            "queued",
+            data={"airflow_dag_run_id": "ragforge__run-id"},
+        )
 
 
 if __name__ == "__main__":
