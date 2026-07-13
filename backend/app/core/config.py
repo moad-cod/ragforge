@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     # Redis is an optional query-response cache. PostgreSQL remains durable.
     REDIS_URL: str = ""
     QUERY_CACHE_TTL_SECONDS: int = 300
+    EVENT_STREAM_MAXLEN: int = 512
+    EVENT_STREAM_TTL_SECONDS: int = 3600
+    SSE_HEARTBEAT_SECONDS: float = 15.0
+    SSE_POLL_SECONDS: float = 1.0
 
     # Optional Airflow REST trigger. Landed runs remain durable when disabled.
     AIRFLOW_API_URL: str = ""
