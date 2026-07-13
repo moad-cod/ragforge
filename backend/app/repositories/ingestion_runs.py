@@ -7,6 +7,16 @@ from app.models import Document, DocumentVersion, IngestionRun
 
 
 TERMINAL_STATUSES = frozenset({"indexed", "failed", "cancelled"})
+ALLOWED_TRANSITIONS = {
+    "landed": frozenset({"landed", "queued", "running", "failed", "cancelled"}),
+    "queued": frozenset({"queued", "running", "failed", "cancelled"}),
+    "running": frozenset({"running", "silver_completed", "failed", "cancelled"}),
+    "silver_completed": frozenset({"silver_completed", "gold_completed", "failed", "cancelled"}),
+    "gold_completed": frozenset({"gold_completed", "indexed", "failed", "cancelled"}),
+    "indexed": frozenset({"indexed"}),
+    "failed": frozenset({"failed"}),
+    "cancelled": frozenset({"cancelled"}),
+}
 DOCUMENT_STATUS_BY_RUN_STATUS = {
     "landed": "landed",
     "queued": "landed",
@@ -55,6 +65,8 @@ async def update_ingestion_status(
     run = await get_ingestion_run(db, ingestion_run_id)
     if run is None:
         return None
+    if status not in ALLOWED_TRANSITIONS.get(run.status, frozenset()):
+        raise ValueError(f"Invalid ingestion status transition: {run.status} -> {status}")
 
     now = datetime.now(UTC).replace(tzinfo=None)
     run.status = status
