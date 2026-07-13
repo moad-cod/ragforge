@@ -1,8 +1,11 @@
-from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, HTTPException, Depends
+import time
+
+from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, Header, HTTPException, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import StreamingResponse
 from app.core.auth import get_current_user
-from app.core.db import get_db
+from app.core.db import AsyncSessionLocal, get_db
 from app.models.tables import Project, Document, DocumentVersion
 from app.repositories import document_versions as version_repository
 from app.repositories import documents as document_repository
@@ -23,6 +26,16 @@ from app.core.config import settings
 from app.services.storage import delete_document_images
 from app.services.airflow import enqueue_ingestion
 from app.services.bronze_storage import delete_raw_file, upload_raw_file
+from app.services.event_stream import (
+    INGESTION_SEQUENCE,
+    StreamEvent,
+    TERMINAL_INGESTION_STATUSES,
+    durable_ingestion_event,
+    format_sse,
+    heartbeat_sse,
+    publish_ingestion_event,
+    replay_ingestion_events,
+)
 import asyncio
 import hashlib
 import uuid
@@ -407,6 +420,25 @@ class IngestionRunResponse(BaseModel):
     progress: IngestionProgress
 
 
+def _ingestion_run_payload(run, version) -> dict:
+    silver_complete = run.status in {"silver_completed", "gold_completed", "indexed"}
+    gold_complete = run.status in {"gold_completed", "indexed"}
+    return {
+        "ingestion_run_id": run.id,
+        "document_id": run.document_id,
+        "document_version_id": run.document_version_id,
+        "status": run.status,
+        "airflow_dag_run_id": run.airflow_dag_run_id,
+        "error_message": run.error_message,
+        "progress": {
+            "bronze": bool(version.bronze_path),
+            "silver": bool(version.silver_path) or silver_complete,
+            "gold": bool(version.gold_path) or gold_complete,
+            "qdrant": run.status == "indexed",
+        },
+    }
+
+
 @router.post("/file", response_model=FileLandingResponse, status_code=202)
 async def upload_file(
     background_tasks: BackgroundTasks,
@@ -486,6 +518,12 @@ async def upload_file(
                 pass
         raise
 
+    await publish_ingestion_event(
+        run.id,
+        "landed",
+        data={"document_id": doc.id, "document_version_id": version.id},
+    )
+
     if settings.AIRFLOW_API_URL:
         background_tasks.add_task(enqueue_ingestion, run.id)
 
@@ -515,22 +553,114 @@ async def get_ingestion_run_status(
     if version is None:
         raise HTTPException(500, "Ingestion run has no document version")
 
-    silver_complete = run.status in {"silver_completed", "gold_completed", "indexed"}
-    gold_complete = run.status in {"gold_completed", "indexed"}
-    return {
-        "ingestion_run_id": run.id,
-        "document_id": run.document_id,
-        "document_version_id": run.document_version_id,
-        "status": run.status,
-        "airflow_dag_run_id": run.airflow_dag_run_id,
-        "error_message": run.error_message,
-        "progress": {
-            "bronze": bool(version.bronze_path),
-            "silver": bool(version.silver_path) or silver_complete,
-            "gold": bool(version.gold_path) or gold_complete,
-            "qdrant": run.status == "indexed",
+    return _ingestion_run_payload(run, version)
+
+
+@router.get("/runs/{ingestion_run_id}/events")
+async def stream_ingestion_run_events(
+    request: Request,
+    ingestion_run_id: str,
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Stream tenant-owned ingestion progress with Redis replay and DB recovery."""
+    run = await ingestion_repository.get_owned_ingestion_run(
+        db,
+        ingestion_run_id,
+        user["user_id"],
+    )
+    if run is None:
+        raise HTTPException(404, "Ingestion run not found")
+    version = await version_repository.get_document_version(db, run.document_version_id)
+    if version is None:
+        raise HTTPException(500, "Ingestion run has no document version")
+
+    initial_payload = _ingestion_run_payload(run, version)
+    initial = durable_ingestion_event(
+        ingestion_run_id,
+        run.status,
+        data=initial_payload,
+        snapshot=True,
+    )
+
+    async def events():
+        yield format_sse(initial)
+        if initial.data["status"] in TERMINAL_INGESTION_STATUSES:
+            return
+
+        last_status_rank = INGESTION_SEQUENCE.get(initial.data["status"], 0)
+        last_event_sequence = initial.sequence
+        seen_event_ids = {initial.id}
+        cursor = last_event_id or "0-0"
+        last_heartbeat = time.monotonic()
+
+        while True:
+            if await request.is_disconnected():
+                return
+
+            replay = await replay_ingestion_events(ingestion_run_id, cursor)
+            for event in replay.events:
+                cursor = event.id
+                if event.id in seen_event_ids:
+                    continue
+                seen_event_ids.add(event.id)
+                event_status = event.data.get("status")
+                event_status_rank = INGESTION_SEQUENCE.get(event_status, 0)
+                if event_status_rank <= last_status_rank or event.sequence <= last_event_sequence:
+                    continue
+                last_status_rank = event_status_rank
+                last_event_sequence = event.sequence
+                yield format_sse(event)
+                if event_status in TERMINAL_INGESTION_STATUSES:
+                    return
+
+            async with AsyncSessionLocal() as stream_db:
+                current = await ingestion_repository.get_ingestion_run(stream_db, ingestion_run_id)
+                if current is None:
+                    return
+                current_version = await version_repository.get_document_version(
+                    stream_db,
+                    current.document_version_id,
+                )
+                if current_version is None:
+                    return
+                durable_rank = INGESTION_SEQUENCE.get(current.status, 0)
+                if durable_rank > last_status_rank:
+                    current_payload = _ingestion_run_payload(current, current_version)
+                    durable_event = durable_ingestion_event(
+                        ingestion_run_id,
+                        current.status,
+                        data=current_payload,
+                    )
+                    next_sequence = max(durable_event.sequence, last_event_sequence + 1)
+                    event = StreamEvent(
+                        id=f"durable-{next_sequence}-{current.status}",
+                        event=durable_event.event,
+                        sequence=next_sequence,
+                        timestamp=durable_event.timestamp,
+                        data=durable_event.data,
+                    )
+                    last_status_rank = durable_rank
+                    last_event_sequence = event.sequence
+                    yield format_sse(event)
+                    if current.status in TERMINAL_INGESTION_STATUSES:
+                        return
+
+            now = time.monotonic()
+            if now - last_heartbeat >= settings.SSE_HEARTBEAT_SECONDS:
+                yield heartbeat_sse()
+                last_heartbeat = now
+            await asyncio.sleep(settings.SSE_POLL_SECONDS)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
         },
-    }
+    )
 
 
 # ── 2. URL scrape ─────────────────────────────────────────────────────────────
