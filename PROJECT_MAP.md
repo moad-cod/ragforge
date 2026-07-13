@@ -215,9 +215,10 @@ Airflow:    pipeline scheduling; ingestion_runs.airflow_dag_run_id provides trac
 
 Status validation is enforced twice: SQLAlchemy rejects invalid values before persistence, and PostgreSQL check constraints protect writes from any other client. Canonical values live in `backend/app/models/statuses.py`.
 
-## Control-Plane Runtime (Tasks 12–20)
+## Control-Plane Runtime (Tasks 12–22)
 
-Tasks 12–20 add the migration and runtime consumers of the control-plane schema:
+Tasks 12–22 add the migration, runtime consumers, deterministic seed data, and
+database-level validation of the control-plane schema:
 
 | Task | Implemented result |
 |---|---|
@@ -230,6 +231,8 @@ Tasks 12–20 add the migration and runtime consumers of the control-plane schem
 | 18 | Deterministic PostgreSQL/Qdrant chunk lineage, complete tenant/version payloads, idempotent version rebuilds, and an authenticated Gold-chunk indexing boundary |
 | 19 | Normalized question hashing, best-effort Redis response caching, and durable provider/model/latency/cache/route query logs |
 | 20 | Structured retrieval hits and durable rank, Qdrant score, optional rerank score, strategy, chunk lineage, and answer-usage traces |
+| 21 | Idempotent namespaced seed data plus real PostgreSQL relationship, lifecycle, uniqueness, foreign-key, and query-lineage tests |
+| 22 | Executable schema introspection for required tables, foreign keys, unique/check constraints, indexes, and Alembic upgrade/rollback validation |
 
 The repository layer owns reusable database operations and does not commit implicitly. API routes and pipeline boundaries control transactions, allowing multi-row document/version/run creation to remain atomic.
 
@@ -439,12 +442,15 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 | `backend/alembic.ini`, `backend/alembic/` | Reversible production schema migration and autogenerate metadata integration |
 | `backend/create_tables.py` | Legacy/development helper for creating missing tables directly from metadata |
 | `backend/reset_dev_db.py` | Destructively deletes Qdrant collections and rebuilds DB tables |
+| `backend/seed_control_plane.py` | Idempotently creates one complete namespaced control-plane graph |
+| `backend/validate_control_plane.py` | Introspects the migrated database and reports the Task 22 structural checklist |
 | `backend/check_data.py` | Helper for inspecting indexed Qdrant data |
 | `backend/cleanup.py` | Helper for deleting document chunks from Qdrant |
 | `test_chunkers.sh` | End-to-end smoke test using `Rapport_de_stage_bac+3.pdf` |
 | `backend/tests/test_chunker_registry.py` | Registry metadata and lightweight import tests |
 | `backend/tests/test_chunkers_api.py` | `/chunkers` and invalid chunker API tests when FastAPI is installed |
 | `backend/tests/test_control_plane_models.py` | Tasks 4–11 table, foreign-key, status, uniqueness, and composite-index tests |
+| `backend/tests/test_control_plane_database.py` | Tasks 21–22 isolated PostgreSQL seed, constraint, relationship, lifecycle, schema, and migration tests |
 | `backend/tests/evaluate.py` | Evaluation helper for local experiments |
 
 ## Current Design Notes

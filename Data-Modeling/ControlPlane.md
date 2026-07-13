@@ -1512,6 +1512,19 @@ Verify the database schema works before connecting the full platform.
 * Duplicate records are rejected where expected.
 * Query and retrieval logs are correctly linked.
 
+## Implementation Status — Complete (2026-07-13)
+
+`backend/seed_control_plane.py` creates a deterministic, idempotent graph that
+includes every control-plane table. The `backend/tests/test_control_plane_database.py`
+suite runs against a protected database whose name must end in `_test`; it
+validates the relationships and rejection cases above using PostgreSQL rather
+than mocks.
+
+```bash
+cd backend
+RUN_DATABASE_TESTS=1 python -m unittest tests.test_control_plane_database -v
+```
+
 ---
 
 # Task 22 — Final Database Validation Checklist
@@ -1519,23 +1532,32 @@ Verify the database schema works before connecting the full platform.
 Before considering the database complete, verify:
 
 ```text
-[ ] All core tables exist.
-[ ] All foreign keys exist.
-[ ] All unique constraints exist.
-[ ] All required indexes exist.
-[ ] Document versioning works.
-[ ] Ingestion run tracking works.
-[ ] Chunk metadata insertion works.
-[ ] Qdrant point IDs are deterministic.
-[ ] Query logging works.
-[ ] Retrieval logging works.
-[ ] MinIO paths are stored correctly.
-[ ] Redis is not used as durable truth.
-[ ] Qdrant can be rebuilt from Gold data.
-[ ] Alembic migration runs successfully.
-[ ] Alembic rollback works.
-[ ] Seed tests pass.
+[x] All core tables exist.
+[x] All foreign keys exist.
+[x] All unique constraints exist.
+[x] All required indexes exist.
+[x] Document versioning works.
+[x] Ingestion run tracking works.
+[x] Chunk metadata insertion works.
+[x] Qdrant point IDs are deterministic.
+[x] Query logging works.
+[x] Retrieval logging works.
+[x] MinIO paths are stored correctly.
+[x] Redis is not used as durable truth.
+[x] Qdrant can be rebuilt from Gold data.
+[x] Alembic migration runs successfully.
+[x] Alembic rollback works.
+[x] Seed tests pass.
 ```
+
+## Implementation Status — Complete (2026-07-13)
+
+`backend/validate_control_plane.py` uses live database introspection to validate
+the structural portion of this checklist. The Task 21 PostgreSQL integration
+suite validates the behavioral portion and performs the reversible Alembic
+migration cycle. Task 18 lineage tests cover deterministic Qdrant rebuilds;
+Tasks 19–20 tests cover durable query and retrieval logging when Redis is
+unavailable.
 
 ---
 
