@@ -9,6 +9,7 @@ from app.models import (
     Document,
     EmbeddingRun,
     IngestionRun,
+    QueryLog,
 )
 
 
@@ -33,6 +34,10 @@ class ControlPlaneModelTests(unittest.TestCase):
         self.assertEqual(len(foreign_keys), 1)
         self.assertEqual(foreign_keys[0].target_fullname, "document_versions.id")
         self.assertEqual(foreign_keys[0].ondelete, "SET NULL")
+
+    def test_query_log_persists_streamed_final_answer(self):
+        self.assertIn("answer", QueryLog.__table__.columns)
+        self.assertTrue(QueryLog.__table__.c.answer.nullable)
 
     def test_invalid_lifecycle_statuses_are_rejected_by_models(self):
         cases = (

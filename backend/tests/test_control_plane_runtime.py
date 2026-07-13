@@ -45,6 +45,7 @@ class ControlPlaneRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "app.api.ingest.ingestion_repository.create_ingestion_run",
                 AsyncMock(return_value=run),
             ) as create_run,
+            patch("app.api.ingest.publish_ingestion_event", AsyncMock()) as publish_event,
             patch.object(settings, "AIRFLOW_API_URL", ""),
         ):
             response = await upload_file(
@@ -71,6 +72,11 @@ class ControlPlaneRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(create_version.await_args.kwargs["silver_path"])
         self.assertEqual(create_run.await_args.kwargs["status"], "landed")
         db.commit.assert_awaited_once()
+        publish_event.assert_awaited_once_with(
+            "run-id",
+            "landed",
+            data={"document_id": "document-id", "document_version_id": "version-id"},
+        )
 
     async def test_status_endpoint_reports_durable_pipeline_progress(self):
         run = SimpleNamespace(
@@ -131,6 +137,8 @@ class ControlPlaneRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return {IngestionRun: run, Document: document, DocumentVersion: version}[model]
 
         db.get.side_effect = get_model
+        await update_ingestion_status(db, run.id, "silver_completed")
+        await update_ingestion_status(db, run.id, "gold_completed")
         result = await update_ingestion_status(db, run.id, "indexed")
 
         self.assertIs(result, run)
@@ -138,6 +146,21 @@ class ControlPlaneRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(document.current_version_id, version.id)
         self.assertEqual(version.status, "indexed")
         self.assertIsNotNone(run.finished_at)
+
+    async def test_repository_rejects_skipped_ingestion_stage(self):
+        run = IngestionRun(
+            id="00000000-0000-0000-0000-000000000001",
+            project_id="00000000-0000-0000-0000-000000000002",
+            document_id="00000000-0000-0000-0000-000000000003",
+            document_version_id="00000000-0000-0000-0000-000000000004",
+            status="landed",
+            created_by="00000000-0000-0000-0000-000000000005",
+        )
+        db = SimpleNamespace(get=AsyncMock(return_value=run), flush=AsyncMock())
+
+        with self.assertRaisesRegex(ValueError, "landed -> indexed"):
+            await update_ingestion_status(db, run.id, "indexed")
+        db.flush.assert_not_awaited()
 
     def test_pipeline_service_token_is_required(self):
         with patch.object(settings, "PIPELINE_SERVICE_TOKEN", "secret"):

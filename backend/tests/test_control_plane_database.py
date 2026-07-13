@@ -169,6 +169,12 @@ class ControlPlaneDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(count, 1)
 
+        query_log = await self.db.get(QueryLog, self.seed.query_log_id)
+        self.assertEqual(
+            query_log.answer,
+            "PostgreSQL stores durable control-plane state.",
+        )
+
     async def test_document_current_version_and_lake_paths_are_linked(self):
         document = await self.db.get(Document, self.seed.document_id)
         version = await self.db.get(DocumentVersion, self.seed.document_version_id)
