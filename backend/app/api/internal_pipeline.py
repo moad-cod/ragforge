@@ -9,6 +9,7 @@ from app.core.db import get_db
 from app.models import Document, DocumentVersion, Project
 from app.repositories import ingestion_runs as ingestion_repository
 from app.services.chunk_indexing import GoldChunk, index_document_version_chunks
+from app.services.event_stream import publish_ingestion_event
 
 
 router = APIRouter()
@@ -84,17 +85,30 @@ async def update_ingestion_run(
     payload: PipelineStatusUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    run = await ingestion_repository.update_ingestion_status(
-        db,
-        ingestion_run_id,
-        payload.status,
-        airflow_dag_run_id=payload.airflow_dag_run_id,
-        error_message=payload.error_message,
-    )
+    try:
+        run = await ingestion_repository.update_ingestion_status(
+            db,
+            ingestion_run_id,
+            payload.status,
+            airflow_dag_run_id=payload.airflow_dag_run_id,
+            error_message=payload.error_message,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     if run is None:
         raise HTTPException(404, "Ingestion run not found")
     await db.commit()
     await db.refresh(run)
+    await publish_ingestion_event(
+        run.id,
+        run.status,
+        data={
+            "document_id": run.document_id,
+            "document_version_id": run.document_version_id,
+            "airflow_dag_run_id": run.airflow_dag_run_id,
+            "error_message": run.error_message,
+        },
+    )
     return _run_payload(run)
 
 
