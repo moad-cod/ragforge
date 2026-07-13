@@ -1780,6 +1780,184 @@ RUN_REDIS_TESTS=1 python -m unittest tests.test_realtime_streaming.RedisEventInt
 
 ---
 
+# Remaining Control-Plane Delivery Work
+
+Tasks 1–23 complete the control-plane implementation. The following tasks move
+that implementation onto the shared development baseline, connect it to real
+data-plane commands, validate the whole platform, expose it in the frontend,
+and prepare it for production. These tasks are not complete unless their
+acceptance criteria have been exercised against running services.
+
+---
+
+# Task 24 — Integrate the Completed Control Plane
+
+## Goal
+
+Merge the completed Task 18–23 feature branches into `dev` and establish one
+tested integration baseline without losing local runtime configuration.
+
+## Required Work
+
+* Open and review pull requests for the completed feature branches.
+* Merge the branches into `dev` in dependency order.
+* Resolve migration, Docker Compose, Airflow, and documentation conflicts.
+* Run the complete backend test suite from the merged `dev` branch.
+* Run `alembic upgrade head` against a clean development database.
+* Keep `.env` files and credentials untracked; update `.env.example` only with
+  safe placeholders and documented defaults.
+
+### Acceptance Criteria
+
+* `dev` contains Tasks 1–23 and has a clean working tree.
+* The Alembic revision chain has one valid head.
+* Docker Compose configuration renders successfully.
+* All unit, PostgreSQL integration, and Redis integration tests pass.
+* No API keys, passwords, tokens, or local `.env` files are committed.
+
+## Implementation Status — Planned
+
+---
+
+# Task 25 — Wire the Real Airflow Data Pipeline
+
+## Goal
+
+Replace the empty Airflow command placeholders with executable,
+container-safe Bronze-to-Silver, Silver-to-Gold, and Qdrant indexing commands.
+
+## Required Work
+
+Configure and test:
+
+```text
+RAGFORGE_BRONZE_TO_SILVER_CMD
+RAGFORGE_SILVER_TO_GOLD_CMD
+RAGFORGE_UPSERT_QDRANT_CMD
+```
+
+Each command must accept `{ingestion_run_id}`, read its input location from the
+control-plane metadata, produce the expected artifact or index state, and exit
+non-zero on failure. The commands must be valid inside the Airflow containers;
+host-only paths and `localhost` service URLs are not acceptable there.
+
+The pipeline must also:
+
+* Write Silver chunk Parquet data to the version's `silver_path`.
+* Write Gold embedded metadata to the version's `gold_path`.
+* Index deterministic Task 18 points in the project Qdrant collection.
+* Update PostgreSQL only after the corresponding data-plane write succeeds.
+* Preserve idempotency when an Airflow task or DAG run is retried.
+* Store task or DAG failure details in `ingestion_runs.error_message`.
+
+### Acceptance Criteria
+
+* A real uploaded document advances through every durable ingestion status.
+* Silver and Gold artifacts exist and match their PostgreSQL paths.
+* PostgreSQL chunk rows match the indexed Qdrant points.
+* Retrying the same run does not duplicate artifacts, chunks, or vector points.
+* A forced command failure produces a durable `failed` status and useful error.
+
+## Implementation Status — Planned
+
+---
+
+# Task 26 — Add Full End-to-End Control-Plane Tests
+
+## Goal
+
+Prove that the API, PostgreSQL, MinIO, Airflow, Qdrant, Redis, and model provider
+work together through real user flows.
+
+## Required Scenarios
+
+1. Upload a representative document through `POST /ingest/file`.
+2. Confirm the Bronze object, document version, and landed ingestion run.
+3. Confirm Airflow processes the run through Silver, Gold, and Qdrant.
+4. Observe ordered ingestion SSE events through the terminal state.
+5. Query the indexed project using both streaming and non-streaming routes.
+6. Verify the answer, query log, retrieval ranks, and chunk lineage.
+7. Restart or disable Redis and verify PostgreSQL snapshot recovery.
+8. Force pipeline and provider failures and verify durable failure behavior.
+9. Verify that one tenant cannot access another tenant's runs or queries.
+
+### Acceptance Criteria
+
+* The complete upload-to-answer flow passes using running containers.
+* Stored paths, statuses, timestamps, counts, and lineage agree across systems.
+* Streaming events agree with durable PostgreSQL state.
+* Redis loss does not lose completed work or corrupt query/ingestion state.
+* The critical path is automated in a repeatable integration test or CI job.
+
+## Implementation Status — Planned
+
+---
+
+# Task 27 — Build the Frontend Control-Plane Experience
+
+## Goal
+
+Expose ingestion, document, query, and retrieval state through a truthful,
+ChatGPT-style user experience backed by the completed APIs.
+
+## Required Work
+
+* Add authenticated project and document selection.
+* Add document upload with immediate acceptance and ingestion-run tracking.
+* Render backend ingestion stages, elapsed time, terminal success, and failures.
+* Stream query stage events and answer tokens from `POST /rag/query/stream`.
+* Use streaming `fetch` so the JWT remains in the authorization header.
+* Reconnect ingestion streams with `Last-Event-ID` and fall back to the status
+  endpoint when a stream cannot resume.
+* Show retry actions and backend error messages without inventing progress.
+* Add query history and optional retrieval-trace views for debugging.
+
+### Acceptance Criteria
+
+* Refreshing the page does not lose the durable ingestion state.
+* Active stages animate, completed stages are marked, and elapsed time is local.
+* Streamed tokens reconstruct the same final answer stored by the backend.
+* Failed operations show a clear error and a safe retry path.
+* Tenant and project boundaries are preserved in every frontend request.
+* Frontend tests cover success, reconnect, empty, loading, and failure states.
+
+## Implementation Status — Planned
+
+---
+
+# Task 28 — Production Readiness and Operations
+
+## Goal
+
+Harden and operate the completed control plane safely outside local development.
+
+## Required Work
+
+* Rotate any credentials that were ever pasted, shared, or committed.
+* Generate unique production secrets for JWT, Airflow, Fernet, internal service
+  authentication, PostgreSQL, MinIO, Redis, and provider access.
+* Store secrets in the deployment platform's secret manager rather than `.env`.
+* Configure TLS, trusted origins, network boundaries, and least-privilege service
+  accounts for PostgreSQL, MinIO, Qdrant, Redis, and Airflow.
+* Define PostgreSQL and object-storage backup and restore procedures.
+* Add health checks, structured logs, metrics, traces, and alerts for ingestion
+  failures, stuck runs, queue delay, query latency, and provider errors.
+* Add rate limits, upload limits, retention policies, and data deletion workflows.
+* Run concurrency, large-document, reconnect, retry, and recovery load tests.
+* Add CI/CD gates for tests, migrations, container builds, and secret scanning.
+
+### Acceptance Criteria
+
+* A production deployment uses no development credentials or default passwords.
+* Backup restoration and migration rollback are tested and documented.
+* Operators can detect failed or stuck ingestion and trace a query end to end.
+* Load-test targets and service-level objectives are defined and met.
+* Deployment and rollback can be repeated from version-controlled automation.
+
+## Implementation Status — Planned
+
+---
+
 # Recommended Implementation Order for AI Agent
 
 Use this order when asking an AI coding agent to build the database:
@@ -1806,6 +1984,11 @@ Use this order when asking an AI coding agent to build the database:
 19. Add seed data.
 20. Add validation tests.
 21. Add authenticated real-time progress and query streaming.
+22. Integrate completed control-plane branches into dev.
+23. Wire and test the real Airflow data-plane commands.
+24. Add full containerized end-to-end control-plane validation.
+25. Build the frontend control-plane and streaming experience.
+26. Complete production hardening, operations, and deployment validation.
 ```
 
 ---
@@ -1845,4 +2028,6 @@ Because RAGForge v2 needs production-style capabilities:
 * Agentic RAG observability
 * Real-time ingestion and answer progress
 
-The final database should support both Data Engineering and AI Engineering use cases while remaining clean, scalable, and production-ready.
+The final database supports both Data Engineering and AI Engineering use cases.
+Tasks 24–28 complete the remaining integration, user experience, and operational
+work required before describing the whole platform as production-ready.
