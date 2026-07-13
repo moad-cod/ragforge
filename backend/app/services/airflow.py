@@ -5,6 +5,7 @@ import httpx
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.repositories.ingestion_runs import update_ingestion_status
+from app.services.event_stream import publish_ingestion_event
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,11 @@ async def enqueue_ingestion(ingestion_run_id: str) -> str | None:
                 airflow_dag_run_id=dag_run_id,
             )
             await db.commit()
+        await publish_ingestion_event(
+            ingestion_run_id,
+            "queued",
+            data={"airflow_dag_run_id": dag_run_id},
+        )
         return dag_run_id
     except Exception:
         logger.exception("Could not enqueue ingestion run %s in Airflow", ingestion_run_id)
