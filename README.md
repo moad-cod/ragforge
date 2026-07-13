@@ -127,6 +127,17 @@ alembic upgrade head
 
 `create_tables.py` remains available only as a development compatibility helper. For a database previously created directly from SQLAlchemy metadata, use a fresh development reset or verify the schema before stamping the Alembic revision.
 
+Create one complete, repeatable development dataset and validate the migrated
+schema:
+
+```bash
+python seed_control_plane.py --namespace development
+python validate_control_plane.py
+```
+
+The seed command is idempotent for each namespace. Use a different namespace
+when you want an additional independent example project.
+
 For a fresh destructive local reset of PostgreSQL tables and Qdrant collections:
 
 ```bash
@@ -354,6 +365,18 @@ Run the registry/unit-style tests:
 cd backend
 PYTHONPATH=. python -m unittest tests.test_chunker_registry tests.test_chunkers_api -v
 ```
+
+Run the Tasks 21–22 PostgreSQL integration suite:
+
+```bash
+cd backend
+RUN_DATABASE_TESTS=1 python -m unittest tests.test_control_plane_database -v
+```
+
+The suite derives an isolated database named `ragforge_test` from
+`DATABASE_URL`, performs a full Alembic upgrade/rollback/upgrade cycle, tests
+the seed graph and database constraints, then rolls the test schema back. Set
+`TEST_DATABASE_URL` explicitly when a different `_test` database is required.
 
 Run the full smoke test from the project root:
 
