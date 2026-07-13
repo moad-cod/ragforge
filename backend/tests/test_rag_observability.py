@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from qdrant_client.models import SparseVector
 
 from app.api.query import QueryRequest, query
-from app.services.query_cache import cache_key
+from app.services.query_cache import cache_key, get_cached_query, set_cached_query
 from app.services.query_observability import normalize_question, normalized_question_hash
 from app.services.retrieval.hybrid import hybrid_search
 from app.services.retrieval.types import RetrievalHit
@@ -69,6 +69,22 @@ class RagObservabilityTests(unittest.IsolatedAsyncioTestCase):
             cache_key(**base),
             cache_key(**{**base, "use_parent_context": True}),
         )
+
+    async def test_redis_failure_does_not_replace_durable_query_path(self):
+        unavailable = SimpleNamespace(
+            get=AsyncMock(side_effect=ConnectionError("redis unavailable")),
+            setex=AsyncMock(side_effect=ConnectionError("redis unavailable")),
+        )
+        with (
+            patch("app.services.query_cache._client", return_value=unavailable),
+            self.assertLogs("app.services.query_cache", level="WARNING") as logs,
+        ):
+            self.assertIsNone(await get_cached_query("query-key"))
+            await set_cached_query("query-key", {"answer": "still durable"})
+
+        unavailable.get.assert_awaited_once_with("query-key")
+        unavailable.setex.assert_awaited_once()
+        self.assertEqual(len(logs.output), 2)
 
     async def test_successful_query_logs_query_retrieval_scores_and_usage(self):
         llm_response = SimpleNamespace(
