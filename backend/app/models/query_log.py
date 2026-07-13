@@ -15,6 +15,7 @@ class QueryLog(Base):
     project_id = Column(UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
     question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)
     normalized_question_hash = Column(String, nullable=True)
     provider = Column(String, nullable=True)
     model = Column(String, nullable=True)
