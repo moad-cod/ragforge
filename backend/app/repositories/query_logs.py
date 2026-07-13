@@ -33,10 +33,12 @@ async def finish_query_log(
     latency_ms: int,
     cache_hit: bool,
     route: str,
+    answer: str | None = None,
 ) -> QueryLog:
     query_log.latency_ms = latency_ms
     query_log.cache_hit = cache_hit
     query_log.route = route
+    query_log.answer = answer
     await db.flush()
     return query_log
 

@@ -190,13 +190,14 @@ async def seed_control_plane(
         metadata_json={"seed_namespace": namespace},
     )
     question = "Where is durable control-plane state stored?"
-    await _get_or_add(
+    seeded_query = await _get_or_add(
         db,
         QueryLog,
         ids["query_log"],
         project_id=ids["project"],
         user_id=ids["user"],
         question=question,
+        answer="PostgreSQL stores durable control-plane state.",
         normalized_question_hash=normalized_question_hash(question),
         provider="groq",
         model="seed-model",
@@ -204,6 +205,9 @@ async def seed_control_plane(
         cache_hit=False,
         route="rag",
     )
+    if seeded_query.answer is None:
+        seeded_query.answer = "PostgreSQL stores durable control-plane state."
+        await db.flush()
     await _get_or_add(
         db,
         RetrievalLog,
