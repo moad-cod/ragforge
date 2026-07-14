@@ -225,7 +225,7 @@ Airflow:    pipeline scheduling; ingestion_runs.airflow_dag_run_id provides trac
 
 Status validation is enforced twice: SQLAlchemy rejects invalid values before persistence, and PostgreSQL check constraints protect writes from any other client. Canonical values live in `backend/app/models/statuses.py`.
 
-## Control-Plane Runtime (Tasks 12–23)
+## Control-Plane Runtime (Tasks 12–23 and 25)
 
 Tasks 12–23 add the migration, runtime consumers, deterministic seed data,
 database validation, and authenticated real-time delivery:
@@ -244,8 +244,16 @@ database validation, and authenticated real-time delivery:
 | 21 | Idempotent namespaced seed data plus real PostgreSQL relationship, lifecycle, uniqueness, foreign-key, and query-lineage tests |
 | 22 | Executable schema introspection for required tables, foreign keys, unique/check constraints, indexes, and Alembic upgrade/rollback validation |
 | 23 | Authenticated ingestion SSE snapshots/replay, Redis Stream fan-out with PostgreSQL recovery, shared streaming/non-streaming RAG execution, durable answers, and token/stage events |
+| 25 | Container-safe Bronze-to-Silver and Silver-to-Gold Parquet jobs, deterministic Gold-to-Qdrant indexing, durable artifact paths, retries, and failure propagation |
 
 The repository layer owns reusable database operations and does not commit implicitly. API routes and pipeline boundaries control transactions, allowing multi-row document/version/run creation to remain atomic.
+
+Task 25 replaces the Airflow command placeholders with built-in batch jobs.
+The custom Airflow image reads version metadata through the authenticated
+internal API, transforms MinIO Bronze objects into Silver and Gold Parquet,
+and sends Gold rows through the deterministic Task 18 indexing boundary.
+Artifact keys are version-scoped and overwritten on retry; PostgreSQL paths
+and statuses advance only after the corresponding object write succeeds.
 
 Airflow talks to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally keeps the application database runtime out of Airflow 3.3 task processes. The internal API delegates every write to the same ingestion repository used elsewhere. FastAPI authenticates through Airflow's `/auth/token` endpoint and triggers DAG runs through the Airflow 3 public `/api/v2` API.
 
@@ -316,7 +324,7 @@ The FastAPI container uses `/app` as its working directory, mounts `./backend:/a
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Batch profile services, enabled with `--profile batch`, add the Airflow 3.3 API server/new UI, scheduler, standalone DAG processor, triggerer, metadata database, and Spark. The local stack keeps `LocalExecutor`; the new UI does not require the heavier Celery worker topology.
+Batch profile services, enabled with `--profile batch`, add the Airflow 3.3 API server/new UI, scheduler, standalone DAG processor, triggerer, metadata database, and Spark. They use the custom `backend/airflow/Dockerfile`, which adds the parser, PyArrow, FastEmbed, and MinIO dependencies used by Task 25. The local stack keeps `LocalExecutor`; the new UI does not require the heavier Celery worker topology.
 
 ## Requirements Strategy
 
@@ -335,7 +343,8 @@ Optional multimodal ColPali and CrossEncoder reranking should be added through a
 5. One transaction creates `DocumentVersion(status=landed)` and `IngestionRun(status=landed)`.
 6. The API returns HTTP 202 with document, version, and ingestion-run IDs; it does not parse/embed/index in the request.
 7. When `AIRFLOW_API_URL` is configured, a post-response task triggers `ragforge_ingestion` and records its DAG-run ID/status as `queued`.
-8. Airflow or Spark jobs update PostgreSQL at `running`, `silver_completed`, `gold_completed`, and `indexed`; failures durably store their error.
+8. Airflow parses/chunks Bronze into Silver Parquet, embeds Silver into Gold Parquet, and indexes Gold through the internal Qdrant boundary.
+9. PostgreSQL advances at `running`, `silver_completed`, `gold_completed`, and `indexed` only after each data-plane boundary succeeds; failures durably store their command error.
 
 URL, Google Drive, and optional multimodal endpoints retain their existing synchronous implementation for now. Heavy operations on those paths remain offloaded with `asyncio.to_thread` where applicable.
 
@@ -475,6 +484,7 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 | `backend/tests/test_control_plane_models.py` | Tasks 4–11 table, foreign-key, status, uniqueness, and composite-index tests |
 | `backend/tests/test_control_plane_database.py` | Tasks 21–22 isolated PostgreSQL seed, constraint, relationship, lifecycle, schema, and migration tests |
 | `backend/tests/test_realtime_streaming.py` | Task 23 SSE, replay, fallback, ownership, token, disconnect, heartbeat, and optional live Redis tests |
+| `backend/tests/test_pipeline_artifacts.py` | Task 25 deterministic Silver/Gold Parquet, retry, empty input, and embedding mismatch tests |
 | `backend/tests/evaluate.py` | Evaluation helper for local experiments |
 
 ## Current Design Notes
