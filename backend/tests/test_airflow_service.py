@@ -86,6 +86,7 @@ class AirflowServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(calls[1][1]["headers"], {"Authorization": "Bearer airflow-jwt"})
         self.assertEqual(calls[1][1]["json"]["conf"], {"ingestion_run_id": "run-id"})
+        self.assertIsNone(calls[1][1]["json"]["logical_date"])
         self.assertEqual(update_status.await_args.args[1], "run-id")
         self.assertEqual(update_status.await_args.args[2], "queued")
         db.commit.assert_awaited_once()
