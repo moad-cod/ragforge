@@ -9,6 +9,7 @@ from app.api.internal_pipeline import (
     GoldChunkPayload,
     IndexChunksPayload,
     index_ingestion_run_chunks,
+    read_ingestion_run,
     require_pipeline_token,
 )
 from app.core.config import settings
@@ -204,6 +205,65 @@ class ControlPlaneRuntimeTests(unittest.IsolatedAsyncioTestCase):
     def test_bronze_database_path_maps_to_bucket_object_key(self):
         with patch.object(settings, "MINIO_BUCKET_BRONZE", "bronze"):
             self.assertEqual(object_key("bronze/org_id=x/raw/file.txt"), "org_id=x/raw/file.txt")
+
+    async def test_pipeline_metadata_exposes_artifact_inputs_and_processing_config(self):
+        run = SimpleNamespace(
+            id="run-id",
+            project_id="project-id",
+            document_id="document-id",
+            document_version_id="version-id",
+            status="running",
+            airflow_dag_run_id="dag-id",
+            error_message=None,
+            started_at=None,
+            finished_at=None,
+            created_at=None,
+        )
+        project = SimpleNamespace(
+            id="project-id",
+            organization_id="organization-id",
+            qdrant_collection="project_collection",
+        )
+        document = SimpleNamespace(
+            id="document-id",
+            filename="sample.txt",
+            source_type="file",
+            mime_type="text/plain",
+        )
+        version = SimpleNamespace(
+            id="version-id",
+            version_number=1,
+            bronze_path="bronze/version/raw/sample.txt",
+            silver_path=None,
+            gold_path=None,
+            parser_name="txt",
+            chunker_id="paragraph",
+            embedding_model="BAAI/bge-small-en-v1.5",
+        )
+        db = SimpleNamespace(get=AsyncMock())
+
+        async def get_model(model, _identifier):
+            from app.models import Document as DocumentModel
+            from app.models import DocumentVersion as VersionModel
+            from app.models import Project as ProjectModel
+
+            return {
+                ProjectModel: project,
+                DocumentModel: document,
+                VersionModel: version,
+            }[model]
+
+        db.get.side_effect = get_model
+        with patch(
+            "app.api.internal_pipeline.ingestion_repository.get_ingestion_run",
+            AsyncMock(return_value=run),
+        ):
+            response = await read_ingestion_run("run-id", db)
+
+        self.assertEqual(response["bronze_path"], version.bronze_path)
+        self.assertEqual(response["chunker_id"], "paragraph")
+        self.assertEqual(response["filename"], "sample.txt")
+        self.assertEqual(response["qdrant_collection"], "project_collection")
 
     async def test_pipeline_can_index_gold_chunks_for_an_ingestion_run(self):
         run = SimpleNamespace(
