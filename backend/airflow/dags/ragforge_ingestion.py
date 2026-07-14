@@ -1,5 +1,7 @@
 """Airflow orchestration shell for the RAGForge ingestion data-plane jobs."""
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
+import logging
 import os
 import shlex
 import subprocess
@@ -13,13 +15,36 @@ from ragforge_control_plane import (
     record_task_status,
 )
 
+logger = logging.getLogger(__name__)
 
-def _run_configured_job(environment_name: str, ingestion_run_id: str) -> None:
+
+def _run_configured_job(environment_name: str, ingestion_run_id: str) -> dict:
     command_template = os.environ.get(environment_name, "").strip()
     if not command_template:
         raise RuntimeError(f"{environment_name} must be configured for the ingestion DAG")
     command = command_template.format(ingestion_run_id=ingestion_run_id)
-    subprocess.run(shlex.split(command), check=True)
+    try:
+        completed = subprocess.run(
+            shlex.split(command),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(f"{environment_name} failed with exit code {exc.returncode}{suffix}") from exc
+    if completed.stderr.strip():
+        logger.info("%s stderr:\n%s", environment_name, completed.stderr.rstrip())
+    lines = [line for line in completed.stdout.splitlines() if line.strip()]
+    if not lines:
+        raise RuntimeError(f"{environment_name} did not return a JSON result")
+    try:
+        result = json.loads(lines[-1])
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{environment_name} returned invalid JSON: {lines[-1]!r}") from exc
+    logger.info("%s result: %s", environment_name, result)
+    return result
 
 
 @dag(
@@ -28,6 +53,7 @@ def _run_configured_job(environment_name: str, ingestion_run_id: str) -> None:
     start_date=datetime(2026, 1, 1),
     catchup=False,
     max_active_runs=4,
+    default_args={"retries": 2, "retry_delay": timedelta(seconds=10)},
     on_failure_callback=mark_task_failure,
     tags=["ragforge", "ingestion"],
 )
@@ -44,14 +70,28 @@ def ragforge_ingestion():
 
     @task(on_failure_callback=mark_task_failure)
     def bronze_to_silver_spark(ingestion_run_id: str) -> str:
-        _run_configured_job("RAGFORGE_BRONZE_TO_SILVER_CMD", ingestion_run_id)
-        record_task_status(get_current_context(), "silver_completed")
+        result = _run_configured_job("RAGFORGE_BRONZE_TO_SILVER_CMD", ingestion_run_id)
+        artifact_path = result.get("artifact_path")
+        if not artifact_path:
+            raise RuntimeError("Bronze-to-Silver job did not return artifact_path")
+        record_task_status(
+            get_current_context(),
+            "silver_completed",
+            silver_path=artifact_path,
+        )
         return ingestion_run_id
 
     @task(on_failure_callback=mark_task_failure)
     def silver_to_gold_embed(ingestion_run_id: str) -> str:
-        _run_configured_job("RAGFORGE_SILVER_TO_GOLD_CMD", ingestion_run_id)
-        record_task_status(get_current_context(), "gold_completed")
+        result = _run_configured_job("RAGFORGE_SILVER_TO_GOLD_CMD", ingestion_run_id)
+        artifact_path = result.get("artifact_path")
+        if not artifact_path:
+            raise RuntimeError("Silver-to-Gold job did not return artifact_path")
+        record_task_status(
+            get_current_context(),
+            "gold_completed",
+            gold_path=artifact_path,
+        )
         return ingestion_run_id
 
     @task(on_failure_callback=mark_task_failure)
