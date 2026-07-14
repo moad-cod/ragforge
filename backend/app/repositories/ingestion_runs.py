@@ -61,12 +61,18 @@ async def update_ingestion_status(
     *,
     airflow_dag_run_id: str | None = None,
     error_message: str | None = None,
+    silver_path: str | None = None,
+    gold_path: str | None = None,
 ) -> IngestionRun | None:
     run = await get_ingestion_run(db, ingestion_run_id)
     if run is None:
         return None
     if status not in ALLOWED_TRANSITIONS.get(run.status, frozenset()):
         raise ValueError(f"Invalid ingestion status transition: {run.status} -> {status}")
+    if silver_path is not None and status not in {"silver_completed", "gold_completed", "indexed"}:
+        raise ValueError("silver_path can only be recorded after Silver completes")
+    if gold_path is not None and status not in {"gold_completed", "indexed"}:
+        raise ValueError("gold_path can only be recorded after Gold completes")
 
     now = datetime.now(UTC).replace(tzinfo=None)
     run.status = status
@@ -88,6 +94,10 @@ async def update_ingestion_status(
     if version is not None:
         version.status = durable_status
         version.error_message = error_message
+        if silver_path is not None:
+            version.silver_path = silver_path
+        if gold_path is not None:
+            version.gold_path = gold_path
     await db.flush()
     return run
 
