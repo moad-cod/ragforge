@@ -1,5 +1,10 @@
 x-airflow-common: &airflow-common
-  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.0}
+  image: ${RAGFORGE_AIRFLOW_IMAGE_NAME:-ragforge-airflow:3.3.0}
+  build:
+    context: ./backend
+    dockerfile: airflow/Dockerfile
+    args:
+      AIRFLOW_BASE_IMAGE: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.0}
   profiles: ["batch"]
   user: "${AIRFLOW_UID:-50000}:0"
   environment: &airflow-common-env
@@ -17,7 +22,11 @@ x-airflow-common: &airflow-common
     AIRFLOW_UID: ${AIRFLOW_UID:-50000}
 
     RAGFORGE_DATABASE_URL: postgresql+asyncpg://ragforge:ragforge@postgres:5432/ragforge
+    DATABASE_URL: postgresql+asyncpg://ragforge:ragforge@postgres:5432/ragforge
+    SECRET_KEY: ${SECRET_KEY:-ragforge-airflow-local-only}
     QDRANT_URL: http://qdrant:6333
+    GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    GROQ_API_KEY: ${GROQ_API_KEY:-}
     MINIO_ENDPOINT: minio:9000
     MINIO_ACCESS_KEY: ragforge
     MINIO_SECRET_KEY: ragforge123
@@ -27,9 +36,9 @@ x-airflow-common: &airflow-common
     REDIS_URL: redis://redis:6379/0
     RAGFORGE_API_URL: http://fastapi:8000
     PIPELINE_SERVICE_TOKEN: ${PIPELINE_SERVICE_TOKEN:-}
-    RAGFORGE_BRONZE_TO_SILVER_CMD: ${RAGFORGE_BRONZE_TO_SILVER_CMD:-}
-    RAGFORGE_SILVER_TO_GOLD_CMD: ${RAGFORGE_SILVER_TO_GOLD_CMD:-}
-    RAGFORGE_UPSERT_QDRANT_CMD: ${RAGFORGE_UPSERT_QDRANT_CMD:-}
+    RAGFORGE_BRONZE_TO_SILVER_CMD: ${RAGFORGE_BRONZE_TO_SILVER_CMD:-python -m jobs.bronze_to_silver --ingestion-run-id {ingestion_run_id}}
+    RAGFORGE_SILVER_TO_GOLD_CMD: ${RAGFORGE_SILVER_TO_GOLD_CMD:-python -m jobs.silver_to_gold --ingestion-run-id {ingestion_run_id}}
+    RAGFORGE_UPSERT_QDRANT_CMD: ${RAGFORGE_UPSERT_QDRANT_CMD:-python -m jobs.upsert_qdrant --ingestion-run-id {ingestion_run_id}}
     PYTHONPATH: /opt/ragforge/backend
   volumes:
     - ./backend:/opt/ragforge/backend
