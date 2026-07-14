@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+import unittest
+
+from app.services.pipeline_artifacts import (
+    bronze_to_silver,
+    derive_artifact_path,
+    gold_chunks,
+    silver_to_gold,
+)
+
+
+class MemoryArtifactStore:
+    def __init__(self, objects: dict[str, bytes] | None = None) -> None:
+        self.objects = dict(objects or {})
+        self.writes: list[str] = []
+
+    def read_bytes(self, path: str) -> bytes:
+        return self.objects[path]
+
+    def write_bytes(self, path: str, data: bytes, _content_type: str) -> str:
+        self.objects[path] = data
+        self.writes.append(path)
+        return path
+
+
+class PipelineArtifactTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.bronze_path = (
+            "bronze/org_id=o/project_id=p/document_id=d/version=1/raw/sample.txt"
+        )
+        self.store = MemoryArtifactStore(
+            {self.bronze_path: b"First source section.\n\nSecond source section."}
+        )
+        self.run = {
+            "bronze_path": self.bronze_path,
+            "silver_path": None,
+            "gold_path": None,
+            "filename": "sample.txt",
+            "chunker_id": "paragraph",
+        }
+
+    def test_artifact_paths_are_deterministic_siblings_of_bronze(self):
+        self.assertEqual(
+            derive_artifact_path(self.bronze_path, "silver", "chunks.parquet"),
+            "silver/org_id=o/project_id=p/document_id=d/version=1/chunks.parquet",
+        )
+
+    def test_pipeline_writes_readable_silver_and_gold_and_can_be_retried(self):
+        parser = lambda _data, _filename: ["parsed source"]
+        chunker_loader = lambda _chunker_id: (
+            lambda _text: ["First durable chunk", "Second durable chunk"]
+        )
+
+        silver = bronze_to_silver(
+            self.run,
+            store=self.store,
+            parser=parser,
+            chunker_loader=chunker_loader,
+        )
+        self.assertEqual(silver["chunks"], 2)
+        self.run["silver_path"] = silver["artifact_path"]
+
+        gold = silver_to_gold(
+            self.run,
+            store=self.store,
+            embedder=lambda texts: [[float(i), 0.5] for i, _text in enumerate(texts)],
+        )
+        self.assertEqual(gold["chunks"], 2)
+        self.run["gold_path"] = gold["artifact_path"]
+
+        chunks = gold_chunks(self.run, store=self.store)
+        self.assertEqual([chunk["chunk_index"] for chunk in chunks], [0, 1])
+        self.assertEqual(chunks[0]["dense_vector"], [0.0, 0.5])
+        self.assertEqual(chunks[0]["metadata"]["chunker_id"], "paragraph")
+
+        bronze_to_silver(
+            self.run,
+            store=self.store,
+            parser=parser,
+            chunker_loader=chunker_loader,
+        )
+        silver_to_gold(
+            self.run,
+            store=self.store,
+            embedder=lambda texts: [[float(i), 0.5] for i, _text in enumerate(texts)],
+        )
+        self.assertEqual(len(self.store.objects), 3)
+        self.assertEqual(self.store.writes.count(silver["artifact_path"]), 2)
+        self.assertEqual(self.store.writes.count(gold["artifact_path"]), 2)
+
+    def test_empty_parse_fails_before_silver_status_can_advance(self):
+        with self.assertRaisesRegex(ValueError, "No indexable text"):
+            bronze_to_silver(
+                self.run,
+                store=self.store,
+                parser=lambda _data, _filename: [],
+                chunker_loader=lambda _chunker_id: lambda _text: [],
+            )
+        self.assertEqual(self.store.writes, [])
+
+    def test_embedding_count_mismatch_does_not_write_gold(self):
+        silver = bronze_to_silver(
+            self.run,
+            store=self.store,
+            parser=lambda _data, _filename: ["source"],
+            chunker_loader=lambda _chunker_id: lambda _text: ["indexable chunk"],
+        )
+        self.run["silver_path"] = silver["artifact_path"]
+        with self.assertRaisesRegex(ValueError, "unexpected number"):
+            silver_to_gold(self.run, store=self.store, embedder=lambda _texts: [])
+        self.assertNotIn(
+            "gold/org_id=o/project_id=p/document_id=d/version=1/embedded_chunks.parquet",
+            self.store.objects,
+        )
+
+    def test_unknown_embedding_model_fails_instead_of_mislabeling_gold(self):
+        silver = bronze_to_silver(
+            self.run,
+            store=self.store,
+            parser=lambda _data, _filename: ["source"],
+            chunker_loader=lambda _chunker_id: lambda _text: ["indexable chunk"],
+        )
+        self.run["silver_path"] = silver["artifact_path"]
+        self.run["embedding_model"] = "unsupported/model"
+        with self.assertRaisesRegex(ValueError, "Unsupported pipeline embedding model"):
+            silver_to_gold(self.run, store=self.store)
+
+
+if __name__ == "__main__":
+    unittest.main()
