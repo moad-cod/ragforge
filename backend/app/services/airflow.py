@@ -41,6 +41,9 @@ async def enqueue_ingestion(ingestion_run_id: str) -> str | None:
                 json={
                     "dag_run_id": dag_run_id,
                     "conf": {"ingestion_run_id": ingestion_run_id},
+                    # Required by Airflow 3.3's TriggerDAGRunPostBody. Null asks
+                    # Airflow to assign the logical date at trigger time.
+                    "logical_date": None,
                 },
             )
             response.raise_for_status()
