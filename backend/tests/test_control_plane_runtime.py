@@ -137,15 +137,47 @@ class ControlPlaneRuntimeTests(unittest.IsolatedAsyncioTestCase):
             return {IngestionRun: run, Document: document, DocumentVersion: version}[model]
 
         db.get.side_effect = get_model
-        await update_ingestion_status(db, run.id, "silver_completed")
-        await update_ingestion_status(db, run.id, "gold_completed")
+        await update_ingestion_status(
+            db,
+            run.id,
+            "silver_completed",
+            silver_path="silver/version/chunks.parquet",
+        )
+        await update_ingestion_status(
+            db,
+            run.id,
+            "gold_completed",
+            gold_path="gold/version/embedded_chunks.parquet",
+        )
         result = await update_ingestion_status(db, run.id, "indexed")
 
         self.assertIs(result, run)
         self.assertEqual(document.status, "indexed")
         self.assertEqual(document.current_version_id, version.id)
         self.assertEqual(version.status, "indexed")
+        self.assertEqual(version.silver_path, "silver/version/chunks.parquet")
+        self.assertEqual(version.gold_path, "gold/version/embedded_chunks.parquet")
         self.assertIsNotNone(run.finished_at)
+
+    async def test_repository_rejects_artifact_path_before_stage_completes(self):
+        run = IngestionRun(
+            id="00000000-0000-0000-0000-000000000001",
+            project_id="00000000-0000-0000-0000-000000000002",
+            document_id="00000000-0000-0000-0000-000000000003",
+            document_version_id="00000000-0000-0000-0000-000000000004",
+            status="landed",
+            created_by="00000000-0000-0000-0000-000000000005",
+        )
+        db = SimpleNamespace(get=AsyncMock(return_value=run), flush=AsyncMock())
+
+        with self.assertRaisesRegex(ValueError, "silver_path"):
+            await update_ingestion_status(
+                db,
+                run.id,
+                "running",
+                silver_path="silver/not-created.parquet",
+            )
+        self.assertEqual(run.status, "landed")
 
     async def test_repository_rejects_skipped_ingestion_stage(self):
         run = IngestionRun(
