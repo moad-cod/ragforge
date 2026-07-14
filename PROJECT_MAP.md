@@ -96,12 +96,18 @@ backend/
       query_cache.py
       query_observability.py
       pipeline_status.py
+  jobs/
+    bronze_to_silver.py
+    silver_to_gold.py
+    upsert_qdrant.py
   alembic/
     env.py
     versions/
       20260711_0001_create_ragforge_v2_database_schema.py
       20260713_0002_add_query_answer.py
   airflow/
+    Dockerfile
+    pipeline-requirements.txt
     dags/ragforge_ingestion.py
     plugins/ragforge_control_plane.py
   alembic.ini
