@@ -1858,7 +1858,33 @@ The pipeline must also:
 * Retrying the same run does not duplicate artifacts, chunks, or vector points.
 * A forced command failure produces a durable `failed` status and useful error.
 
-## Implementation Status — Planned
+## Implementation Status — Complete (2026-07-14)
+
+The Airflow batch image now contains the parser, Parquet, embedding, and MinIO
+dependencies required by three built-in container commands:
+
+```text
+python -m jobs.bronze_to_silver --ingestion-run-id {ingestion_run_id}
+python -m jobs.silver_to_gold --ingestion-run-id {ingestion_run_id}
+python -m jobs.upsert_qdrant --ingestion-run-id {ingestion_run_id}
+```
+
+Bronze-to-Silver parses the versioned MinIO object, applies the selected
+chunker, and overwrites deterministic Silver Parquet. Silver-to-Gold embeds
+those rows and overwrites deterministic Gold Parquet. Gold indexing reads the
+artifact and calls the authenticated Task 18 boundary, which replaces the
+version's deterministic Qdrant points and PostgreSQL chunk rows.
+
+Airflow records `silver_path` and `gold_path` in the same durable transition
+that advances each status, and task failures persist the command error. The
+Airflow 3.3 trigger request includes its required nullable `logical_date`.
+
+A live Docker Compose validation uploaded a text document and exercised
+PostgreSQL, MinIO, Airflow, Qdrant, and Redis through `indexed`. Both Parquet
+objects existed at the recorded paths, PostgreSQL and Qdrant contained the
+same deterministic chunk lineage, rerunning all three commands retained one
+artifact per layer and one chunk/point, and a controlled empty-document run
+ended durably in `failed` with a useful `No indexable text` error.
 
 ---
 
