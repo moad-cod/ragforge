@@ -27,6 +27,7 @@ openai==2.44.0
 groq==0.37.1
 
 boto3==1.43.39
+pyarrow==21.0.0
 
 PyMuPDF==1.27.2.3
 pillow>=10.3,<13
