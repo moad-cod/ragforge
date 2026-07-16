@@ -492,6 +492,8 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 | `backend/tests/test_control_plane_database.py` | Tasks 21–22 isolated PostgreSQL seed, constraint, relationship, lifecycle, schema, and migration tests |
 | `backend/tests/test_realtime_streaming.py` | Task 23 SSE, replay, fallback, ownership, token, disconnect, heartbeat, and optional live Redis tests |
 | `backend/tests/test_pipeline_artifacts.py` | Task 25 deterministic Silver/Gold Parquet, retry, empty input, and embedding mismatch tests |
+| `backend/tests/e2e/test_control_plane.py` | Task 26 containerized upload-to-answer, lineage, Redis recovery, failure, and tenant-isolation tests |
+| `scripts/e2e_v2.sh` | Isolated one-command Task 26 Compose orchestrator |
 | `backend/tests/evaluate.py` | Evaluation helper for local experiments |
 
 ## Current Design Notes
