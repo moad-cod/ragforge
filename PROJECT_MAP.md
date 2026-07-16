@@ -256,6 +256,12 @@ and sends Gold rows through the deterministic Task 18 indexing boundary.
 Artifact keys are version-scoped and overwritten on retry; PostgreSQL paths
 and statuses advance only after the corresponding object write succeeds.
 
+Task 26 packages the complete runtime into a repeatable `make e2e-v2` gate. It
+uses a separate Compose project and volumes, alternate host ports, a local
+OpenAI-compatible provider, and deterministic embeddings. Public APIs drive
+the user flows; direct PostgreSQL, MinIO, Airflow, and Qdrant clients are used
+only to assert cross-system counts, paths, timestamps, ranks, and lineage.
+
 Airflow talks to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally keeps the application database runtime out of Airflow 3.3 task processes. The internal API delegates every write to the same ingestion repository used elsewhere. FastAPI authenticates through Airflow's `/auth/token` endpoint and triggers DAG runs through the Airflow 3 public `/api/v2` API.
 
 The `ragforge_ingestion` DAG exposes the Task 17 sequence (`validate_bronze`, `bronze_to_silver_spark`, `silver_to_gold_embed`, `upsert_qdrant`, `update_postgres_status`). Transformation commands are configured through environment variables and receive `{ingestion_run_id}`; a missing command fails the run instead of falsely advancing its durable status. The Task 18 indexing boundary accepts embedded Gold chunks at `POST /internal/pipeline/ingestion-runs/{id}/chunks/index`, rebuilds that version's Qdrant points, and atomically replaces its PostgreSQL chunk rows.
