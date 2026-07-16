@@ -38,7 +38,16 @@ def _deterministic_embedding(text: str) -> list[float]:
 def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
+    if settings.EMBEDDING_BACKEND == "deterministic":
+        return [_deterministic_embedding(text) for text in texts]
+    if settings.EMBEDDING_BACKEND != "fastembed":
+        raise ValueError(f"Unsupported embedding backend {settings.EMBEDDING_BACKEND!r}")
     return [_normalize(vector) for vector in get_embedding_model().passage_embed(texts)]
 
+
 def embed_query(query: str) -> list[float]:
+    if settings.EMBEDDING_BACKEND == "deterministic":
+        return _deterministic_embedding(query)
+    if settings.EMBEDDING_BACKEND != "fastembed":
+        raise ValueError(f"Unsupported embedding backend {settings.EMBEDDING_BACKEND!r}")
     return _normalize(next(get_embedding_model().query_embed([query])))
