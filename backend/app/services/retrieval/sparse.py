@@ -33,11 +33,16 @@ def _deterministic_sparse(text: str) -> SparseVector:
 def embed_sparse(texts: list[str]) -> list[SparseVector]:
     if not texts:
         return []
+    if settings.EMBEDDING_BACKEND == "deterministic":
+        return [_deterministic_sparse(text) for text in texts]
+    if settings.EMBEDDING_BACKEND != "fastembed":
+        raise ValueError(f"Unsupported embedding backend {settings.EMBEDDING_BACKEND!r}")
     embeddings = list(_get_sparse_model().embed(texts))
     return [
         SparseVector(indices=e.indices.tolist(), values=e.values.tolist())
         for e in embeddings
     ]
+
 
 def embed_sparse_query(query: str) -> SparseVector:
     return embed_sparse([query])[0]
