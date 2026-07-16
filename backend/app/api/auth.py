@@ -57,6 +57,16 @@ class RegisterRequest(BaseModel):
             raise ValueError("Password must be at least 8 characters")
         return value
 
+    @field_validator("organization_id")
+    @classmethod
+    def validate_organization_id(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        try:
+            return str(uuid.UUID(value.strip()))
+        except ValueError as exc:
+            raise ValueError("organization_id must be a valid UUID") from exc
+
 class UpdateMeRequest(BaseModel):
     email: str | None = None
     password: str | None = None
