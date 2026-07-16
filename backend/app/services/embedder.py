@@ -1,7 +1,14 @@
+import hashlib
+import re
+
 import numpy as np
 from fastembed import TextEmbedding
 
+from app.core.config import settings
+
 _model = None
+_DETERMINISTIC_VECTOR_SIZE = 384
+_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_]+")
 
 
 def get_embedding_model() -> TextEmbedding:
@@ -16,6 +23,17 @@ def _normalize(vector) -> list[float]:
     if norm:
         arr = arr / norm
     return arr.tolist()
+
+
+def _deterministic_embedding(text: str) -> list[float]:
+    """Produce a stable lexical vector for offline integration environments."""
+    vector = np.zeros(_DETERMINISTIC_VECTOR_SIZE, dtype=np.float32)
+    for token in _TOKEN_PATTERN.findall(text.lower()):
+        digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
+        index = int.from_bytes(digest, "big") % _DETERMINISTIC_VECTOR_SIZE
+        vector[index] += 1.0
+    return _normalize(vector)
+
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
