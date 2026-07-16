@@ -37,12 +37,10 @@ qdrant = QdrantClient(
 LLM_CONFIGS = {
     "gemini": {
         "api_key": lambda: settings.GEMINI_API_KEY,
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "default_model": "gemini-2.5-flash",
     },
     "groq": {
         "api_key": lambda: settings.GROQ_API_KEY,
-        "base_url": "https://api.groq.com/openai/v1",
         "default_model": "llama-3.3-70b-versatile",
     },
 }
