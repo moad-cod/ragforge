@@ -90,6 +90,19 @@ class UpdateMeRequest(BaseModel):
             raise ValueError("Password must be at least 8 characters")
         return value
 
+    @field_validator("organization_id")
+    @classmethod
+    def validate_optional_organization_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return ""
+        try:
+            return str(uuid.UUID(normalized))
+        except ValueError as exc:
+            raise ValueError("organization_id must be a valid UUID") from exc
+
 class UserResponse(BaseModel):
     user_id: str
     organization_id: str | None
