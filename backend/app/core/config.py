@@ -7,6 +7,11 @@ class Settings(BaseSettings):
     QDRANT_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
     GROQ_API_KEY: str = ""
+    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+    LLM_MAX_RETRIES: int = 2
+    LLM_TIMEOUT_SECONDS: float = 60.0
+    EMBEDDING_BACKEND: str = "fastembed"
 
     # Cloudflare R2 is needed only for multimodal PDF ingestion.
     R2_ACCOUNT_ID: str = ""
