@@ -51,7 +51,15 @@ def get_llm_client(provider: str) -> tuple[OpenAI, str]:
     except ValueError as exc:
         raise HTTPException(503, str(exc))
     config = LLM_CONFIGS[provider]
-    return OpenAI(api_key=config["api_key"](), base_url=config["base_url"]), config["default_model"]
+    return (
+        OpenAI(
+            api_key=config["api_key"](),
+            base_url=settings.llm_base_url(provider),
+            max_retries=settings.LLM_MAX_RETRIES,
+            timeout=settings.LLM_TIMEOUT_SECONDS,
+        ),
+        config["default_model"],
+    )
 
 
 def resolve_model(provider: str, requested_model: str | None) -> str:
