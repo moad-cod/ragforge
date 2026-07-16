@@ -225,7 +225,7 @@ Airflow:    pipeline scheduling; ingestion_runs.airflow_dag_run_id provides trac
 
 Status validation is enforced twice: SQLAlchemy rejects invalid values before persistence, and PostgreSQL check constraints protect writes from any other client. Canonical values live in `backend/app/models/statuses.py`.
 
-## Control-Plane Runtime (Tasks 12–23 and 25)
+## Control-Plane Runtime (Tasks 12–23, 25, and 26)
 
 Tasks 12–23 add the migration, runtime consumers, deterministic seed data,
 database validation, and authenticated real-time delivery:
@@ -245,6 +245,7 @@ database validation, and authenticated real-time delivery:
 | 22 | Executable schema introspection for required tables, foreign keys, unique/check constraints, indexes, and Alembic upgrade/rollback validation |
 | 23 | Authenticated ingestion SSE snapshots/replay, Redis Stream fan-out with PostgreSQL recovery, shared streaming/non-streaming RAG execution, durable answers, and token/stage events |
 | 25 | Container-safe Bronze-to-Silver and Silver-to-Gold Parquet jobs, deterministic Gold-to-Qdrant indexing, durable artifact paths, retries, and failure propagation |
+| 26 | Isolated containerized upload-to-answer validation across API, PostgreSQL, MinIO, Airflow, Qdrant, Redis, SSE, provider failures, and tenant boundaries |
 
 The repository layer owns reusable database operations and does not commit implicitly. API routes and pipeline boundaries control transactions, allowing multi-row document/version/run creation to remain atomic.
 
