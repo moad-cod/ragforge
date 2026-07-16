@@ -58,13 +58,12 @@ services:
 
   postgres:
     image: postgres:16
-    container_name: ragforge_postgres
     environment:
       POSTGRES_USER: ragforge
       POSTGRES_PASSWORD: ragforge
       POSTGRES_DB: ragforge
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     command:
@@ -82,30 +81,27 @@ services:
 
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: ragforge_qdrant
     ports:
-      - "6333:6333"
+      - "${QDRANT_PORT:-6333}:6333"
     volumes:
       - qdrant_data:/qdrant/storage
     mem_limit: 2g
 
   minio:
     image: minio/minio:latest
-    container_name: ragforge_minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ragforge
       MINIO_ROOT_PASSWORD: ragforge123
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
     mem_limit: 512m
 
   minio-init:
     image: minio/mc:latest
-    container_name: ragforge_minio_init
     depends_on:
       - minio
     entrypoint: ["/bin/sh", "/init/init_minio.sh"]
@@ -118,9 +114,8 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: ragforge_redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
@@ -138,7 +133,6 @@ services:
   fastapi:
     build:
       context: ./backend
-    container_name: ragforge_fastapi
     working_dir: /app
     command:
       - python
@@ -186,7 +180,7 @@ services:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
       MAX_MULTIMODAL_PAGES: ${MAX_MULTIMODAL_PAGES:-50}
     ports:
-      - "8000:8000"
+      - "${FASTAPI_PORT:-8000}:8000"
     volumes:
       - ./backend:/app
     depends_on:
