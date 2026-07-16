@@ -1,0 +1,119 @@
+services:
+  fastapi:
+    environment:
+      SECRET_KEY: ragforge-e2e-secret-key
+      GEMINI_API_KEY: ragforge-e2e-provider-key
+      GEMINI_BASE_URL: http://provider-stub:8090/v1
+      GROQ_API_KEY: ragforge-e2e-unused-key
+      GROQ_BASE_URL: http://provider-stub:8090/v1
+      LLM_MAX_RETRIES: "0"
+      LLM_TIMEOUT_SECONDS: "10"
+      EMBEDDING_BACKEND: deterministic
+      AIRFLOW_API_URL: http://airflow-apiserver:8080
+      AIRFLOW_USERNAME: admin
+      AIRFLOW_PASSWORD: admin
+      PIPELINE_SERVICE_TOKEN: ragforge-e2e-pipeline-token
+      SSE_HEARTBEAT_SECONDS: "1"
+      SSE_POLL_SECONDS: "0.2"
+      QUERY_CACHE_TTL_SECONDS: "300"
+      R2_ACCOUNT_ID: ""
+      R2_ACCESS_KEY_ID: ""
+      R2_SECRET_ACCESS_KEY: ""
+      R2_BUCKET_NAME: ""
+      R2_PUBLIC_URL: ""
+    depends_on:
+      provider-stub:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  airflow-init:
+    environment:
+      SECRET_KEY: ragforge-e2e-secret-key
+      EMBEDDING_BACKEND: deterministic
+      PIPELINE_SERVICE_TOKEN: ragforge-e2e-pipeline-token
+      GEMINI_API_KEY: ragforge-e2e-unused-key
+      GROQ_API_KEY: ragforge-e2e-unused-key
+      AIRFLOW__API_AUTH__JWT_SECRET: ragforge-e2e-airflow-jwt-secret
+      AIRFLOW__CORE__FERNET_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+
+  airflow-apiserver:
+    environment:
+      SECRET_KEY: ragforge-e2e-secret-key
+      EMBEDDING_BACKEND: deterministic
+      PIPELINE_SERVICE_TOKEN: ragforge-e2e-pipeline-token
+      GEMINI_API_KEY: ragforge-e2e-unused-key
+      GROQ_API_KEY: ragforge-e2e-unused-key
+      AIRFLOW__API_AUTH__JWT_SECRET: ragforge-e2e-airflow-jwt-secret
+      AIRFLOW__CORE__FERNET_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+
+  airflow-scheduler:
+    environment:
+      SECRET_KEY: ragforge-e2e-secret-key
+      EMBEDDING_BACKEND: deterministic
+      PIPELINE_SERVICE_TOKEN: ragforge-e2e-pipeline-token
+      GEMINI_API_KEY: ragforge-e2e-unused-key
+      GROQ_API_KEY: ragforge-e2e-unused-key
+      AIRFLOW__API_AUTH__JWT_SECRET: ragforge-e2e-airflow-jwt-secret
+      AIRFLOW__CORE__FERNET_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+
+  airflow-dag-processor:
+    environment:
+      SECRET_KEY: ragforge-e2e-secret-key
+      EMBEDDING_BACKEND: deterministic
+      PIPELINE_SERVICE_TOKEN: ragforge-e2e-pipeline-token
+      GEMINI_API_KEY: ragforge-e2e-unused-key
+      GROQ_API_KEY: ragforge-e2e-unused-key
+      AIRFLOW__API_AUTH__JWT_SECRET: ragforge-e2e-airflow-jwt-secret
+      AIRFLOW__CORE__FERNET_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+
+  airflow-triggerer:
+    environment:
+      SECRET_KEY: ragforge-e2e-secret-key
+      EMBEDDING_BACKEND: deterministic
+      PIPELINE_SERVICE_TOKEN: ragforge-e2e-pipeline-token
+      GEMINI_API_KEY: ragforge-e2e-unused-key
+      GROQ_API_KEY: ragforge-e2e-unused-key
+      AIRFLOW__API_AUTH__JWT_SECRET: ragforge-e2e-airflow-jwt-secret
+      AIRFLOW__CORE__FERNET_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+
+  provider-stub:
+    build:
+      context: ./backend
+    image: ragforge-e2e-provider
+    working_dir: /app
+    command:
+      - python
+      - -m
+      - uvicorn
+      - tests.e2e.provider_stub:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8090"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ragforge:ragforge@postgres:5432/ragforge
+      SECRET_KEY: ragforge-e2e-secret-key
+      QDRANT_URL: http://qdrant:6333
+    volumes:
+      - ./backend:/app
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=2)"
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 5s
