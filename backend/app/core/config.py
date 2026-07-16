@@ -57,6 +57,13 @@ class Settings(BaseSettings):
         if provider == "groq" and not self.GROQ_API_KEY:
             raise ValueError("GROQ_API_KEY is required for Groq queries")
 
+    def llm_base_url(self, provider: str) -> str:
+        if provider == "gemini":
+            return self.GEMINI_BASE_URL
+        if provider == "groq":
+            return self.GROQ_BASE_URL
+        raise ValueError(f"Unsupported LLM provider {provider!r}")
+
     def require_r2(self) -> None:
         missing = [
             name for name in (
