@@ -1915,7 +1915,25 @@ work together through real user flows.
 * Redis loss does not lose completed work or corrupt query/ingestion state.
 * The critical path is automated in a repeatable integration test or CI job.
 
-## Implementation Status — Planned
+## Implementation Status — Complete (2026-07-16)
+
+Task 26 adds an isolated `ragforge-e2e` Docker Compose project and a one-command
+`make e2e-v2` runner. The suite applies Alembic migrations to clean PostgreSQL
+and Airflow databases, starts MinIO, Qdrant, Redis, FastAPI, Airflow, and a
+deterministic OpenAI-compatible provider, and then exercises real authenticated
+user flows.
+
+The automated scenarios validate upload through Bronze, Silver, Gold, and
+Qdrant; ordered ingestion and query SSE; streaming and non-streaming answers;
+Redis cache hits; PostgreSQL query/retrieval logs; Parquet, chunk, and vector
+lineage agreement; Redis-loss recovery through durable PostgreSQL snapshots;
+durable pipeline and provider failures; and cross-tenant access denial.
+
+The E2E overlay uses deterministic dense/sparse embeddings and a local provider
+so mandatory CI requires no external model downloads or paid API credentials.
+FastEmbed and the configured Gemini/Groq endpoints remain the default runtime
+behavior outside the E2E environment. A GitHub Actions workflow runs the suite
+for relevant pull requests and can also be triggered manually.
 
 ---
 
