@@ -411,6 +411,28 @@ python -m unittest tests.test_realtime_streaming -v
 RUN_REDIS_TESTS=1 python -m unittest tests.test_realtime_streaming.RedisEventIntegrationTests -v
 ```
 
+Run the Task 26 isolated, containerized control-plane suite:
+
+```bash
+make e2e-v2
+```
+
+This command creates a separate `ragforge-e2e` Compose project on alternate
+host ports, migrates a clean PostgreSQL database, and validates:
+
+- upload through Bronze, Silver, Gold, Airflow, PostgreSQL, and Qdrant;
+- ingestion and query SSE ordering;
+- non-streaming, streaming, and cached answers;
+- query/retrieval logs and deterministic chunk lineage;
+- PostgreSQL recovery while Redis is stopped;
+- durable pipeline and provider failures;
+- cross-tenant access denial.
+
+The mandatory suite uses a local OpenAI-compatible provider and deterministic
+embedding backend, so it does not require paid API credentials or model
+downloads. Normal runtime continues to use FastEmbed and the configured Gemini
+or Groq provider. Set `KEEP_E2E_STACK=1` to retain containers after the run.
+
 Run the full smoke test from the project root:
 
 ```bash
