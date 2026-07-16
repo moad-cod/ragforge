@@ -8,8 +8,7 @@ from app.core.db import get_db
 from app.models.tables import User, Project, Document, Organization
 from app.core.auth import get_current_user
 from datetime import datetime, timedelta
-from pydantic import BaseModel
-from pydantic import field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 import uuid
 import bcrypt
 
@@ -28,6 +27,16 @@ def verify_password(password: str, hashed: str) -> bool:
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class RegisterRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "email": "user@example.com",
+                "password": "strong-password",
+                "full_name": "Example User",
+            }
+        }
+    )
+
     email: str
     password: str
     full_name: str | None = None
