@@ -1,10 +1,11 @@
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any, Literal
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from openai import OpenAI
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
@@ -16,7 +17,7 @@ from starlette.responses import StreamingResponse
 from app.core.auth import get_current_user
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal, get_db
-from app.models.tables import Document, Project
+from app.models.tables import Chunk, Document, Project, QueryLog, RetrievalLog
 from app.repositories import query_logs as query_log_repository
 from app.repositories import retrieval_logs as retrieval_log_repository
 from app.services.embedder import embed_query
@@ -76,6 +77,41 @@ class QueryRequest(BaseModel):
     include_context: bool = False
 
 
+class QueryHistoryItem(BaseModel):
+    query_log_id: str
+    project_id: str
+    question: str
+    answer: str | None
+    provider: str | None
+    model: str | None
+    latency_ms: int | None
+    cache_hit: bool
+    route: str | None
+    created_at: datetime
+
+
+class RetrievalTraceItem(BaseModel):
+    retrieval_log_id: str
+    chunk_id: str | None
+    document_id: str | None
+    document_name: str | None
+    document_version_id: str | None
+    chunk_index: int | None
+    text: str | None
+    section_title: str | None
+    page_start: int | None
+    page_end: int | None
+    qdrant_score: float | None
+    rerank_score: float | None
+    rank: int
+    retrieval_strategy: str | None
+    used_in_answer: bool
+
+
+class QueryTraceResponse(QueryHistoryItem):
+    retrievals: list[RetrievalTraceItem]
+
+
 QueryEventEmitter = Callable[[str, dict[str, Any]], Awaitable[None]]
 _query_stream_tasks: set[asyncio.Task] = set()
 
@@ -107,6 +143,35 @@ async def _authorize_query(
         if not doc_result.scalar_one_or_none():
             raise HTTPException(404, "Document not found in this project")
     return project
+
+
+async def _get_owned_project(db: AsyncSession, project_id: str, user_id: str) -> Project:
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.created_by == user_id,
+            Project.deleted_at.is_(None),
+        )
+    )
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    return project
+
+
+def _history_payload(query_log: QueryLog) -> dict[str, Any]:
+    return {
+        "query_log_id": query_log.id,
+        "project_id": query_log.project_id,
+        "question": query_log.question,
+        "answer": query_log.answer,
+        "provider": query_log.provider,
+        "model": query_log.model,
+        "latency_ms": query_log.latency_ms,
+        "cache_hit": query_log.cache_hit,
+        "route": query_log.route,
+        "created_at": query_log.created_at,
+    }
 
 
 async def _notify(
@@ -389,6 +454,79 @@ Question: {request.question}"""
             error=str(detail) or "Query failed",
         )
         raise
+
+
+@router.get(
+    "/projects/{project_id}/history",
+    response_model=list[QueryHistoryItem],
+)
+async def query_history(
+    project_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _get_owned_project(db, project_id, user["user_id"])
+    history = await query_log_repository.get_project_query_history(
+        db,
+        project_id,
+        limit=limit,
+    )
+    return [_history_payload(query_log) for query_log in history]
+
+
+@router.get("/queries/{query_log_id}", response_model=QueryTraceResponse)
+async def query_trace(
+    query_log_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    query_result = await db.execute(
+        select(QueryLog)
+        .join(Project, Project.id == QueryLog.project_id)
+        .where(
+            QueryLog.id == query_log_id,
+            QueryLog.user_id == user["user_id"],
+            Project.created_by == user["user_id"],
+            Project.deleted_at.is_(None),
+        )
+    )
+    query_log = query_result.scalar_one_or_none()
+    if query_log is None:
+        raise HTTPException(404, "Query not found")
+
+    retrieval_result = await db.execute(
+        select(RetrievalLog, Chunk, Document)
+        .outerjoin(Chunk, Chunk.id == RetrievalLog.chunk_id)
+        .outerjoin(Document, Document.id == Chunk.document_id)
+        .where(RetrievalLog.query_log_id == query_log.id)
+        .order_by(RetrievalLog.rank)
+    )
+    retrievals = []
+    for retrieval, chunk, document in retrieval_result.all():
+        retrievals.append(
+            {
+                "retrieval_log_id": retrieval.id,
+                "chunk_id": retrieval.chunk_id,
+                "document_id": chunk.document_id if chunk is not None else None,
+                "document_name": document.filename if document is not None else None,
+                "document_version_id": (
+                    chunk.document_version_id if chunk is not None else None
+                ),
+                "chunk_index": chunk.chunk_index if chunk is not None else None,
+                "text": chunk.text if chunk is not None else None,
+                "section_title": chunk.section_title if chunk is not None else None,
+                "page_start": chunk.page_start if chunk is not None else None,
+                "page_end": chunk.page_end if chunk is not None else None,
+                "qdrant_score": retrieval.qdrant_score,
+                "rerank_score": retrieval.rerank_score,
+                "rank": retrieval.rank,
+                "retrieval_strategy": retrieval.retrieval_strategy,
+                "used_in_answer": retrieval.used_in_answer,
+            }
+        )
+
+    return {**_history_payload(query_log), "retrievals": retrievals}
 
 
 @router.post("/query")

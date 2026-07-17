@@ -19,11 +19,15 @@ RAGForge is a FastAPI SaaS backend for multi-tenant Retrieval-Augmented Generati
 - Asynchronous file landing in MinIO Bronze with durable ingestion-run status.
 - Durable query and ranked retrieval observability with best-effort Redis caching.
 - Authenticated ingestion progress SSE and token-by-token RAG query streaming.
+- Next.js control-plane UI for projects, uploads, live ingestion, streaming chat,
+  query history, and ranked retrieval traces.
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
+| Frontend | Next.js App Router, React, TypeScript, Tailwind CSS |
+| Frontend state | TanStack Query, React Hook Form, Zod |
 | API | FastAPI |
 | Database | PostgreSQL, SQLAlchemy async, asyncpg |
 | Vector DB | Qdrant |
@@ -64,7 +68,12 @@ backend/
   create_tables.py     # create missing tables
   reset_dev_db.py      # destructive local reset
   tests/               # registry/API/evaluation scripts
-docker-compose.yml     # Postgres + Qdrant
+frontend/
+  src/app/             # App Router pages and authenticated API proxy
+  src/components/      # control-plane screens and UI primitives
+  src/hooks/           # ingestion stream recovery
+  src/lib/             # typed API, SSE parser, shared types
+docker-compose.yml     # frontend + FastAPI + Postgres + Qdrant + MinIO + Redis
 test_chunkers.sh       # end-to-end smoke test
 PROJECT_MAP.md         # architecture and design map
 ```
@@ -77,7 +86,12 @@ PROJECT_MAP.md         # architecture and design map
 docker compose up -d
 ```
 
-This starts PostgreSQL, Qdrant, MinIO, Redis, and the FastAPI development app.
+This starts the Next.js UI, PostgreSQL, Qdrant, MinIO, Redis, and FastAPI.
+
+Open:
+
+- RAGForge UI: `http://localhost:3000`
+- FastAPI docs: `http://localhost:8000/docs`
 
 ### 2. Install backend dependencies
 
@@ -162,6 +176,19 @@ uvicorn app.main:app --reload
 
 API docs: `http://localhost:8000/docs`
 
+For frontend-only development:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The browser talks to the same-origin Next.js proxy. The proxy stores the
+FastAPI JWT in an HttpOnly cookie and forwards authenticated requests and SSE
+streams to `BACKEND_URL`. Set `AUTH_COOKIE_SECURE=true` when deployed behind
+HTTPS; local Compose intentionally keeps it false.
+
 ### 6. Start Airflow 3.3 and Spark (optional)
 
 The `batch` profile runs the Airflow 3 API server/new UI, scheduler, DAG
@@ -241,8 +268,10 @@ volume.
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/ingest/file` | Land a file in Bronze and return an ingestion run (HTTP 202) |
+| GET | `/ingest/runs?project_id=` | List recent tenant-owned project runs |
 | GET | `/ingest/runs/{ingestion_run_id}` | Read durable Bronze/Silver/Gold/Qdrant progress |
 | GET | `/ingest/runs/{ingestion_run_id}/events` | Stream durable progress snapshots and replayable SSE events |
+| POST | `/ingest/runs/{ingestion_run_id}/retry` | Retry a failed run from its durable Bronze object |
 | POST | `/ingest/url` | Scrape and index a public URL |
 | POST | `/ingest/gdrive` | Import and index a Google Drive file |
 | POST | `/ingest/multimodal` | Render, embed, upload, and index PDF pages |
@@ -276,6 +305,8 @@ Set `AIRFLOW_API_URL=http://airflow-apiserver:8080` and `PIPELINE_SERVICE_TOKEN`
 |---|---|---|
 | POST | `/rag/query` | Text RAG query |
 | POST | `/rag/query/stream` | Stream RAG stages and answer tokens over SSE |
+| GET | `/rag/projects/{project_id}/history` | List tenant-owned durable query history |
+| GET | `/rag/queries/{query_log_id}` | Read one answer and its ranked retrieval trace |
 | POST | `/rag/multimodal-query` | Page-image multimodal query |
 
 Text query body:

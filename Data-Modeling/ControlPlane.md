@@ -1965,7 +1965,27 @@ ChatGPT-style user experience backed by the completed APIs.
 * Tenant and project boundaries are preserved in every frontend request.
 * Frontend tests cover success, reconnect, empty, loading, and failure states.
 
-## Implementation Status — Planned
+## Implementation Status — Complete (2026-07-16)
+
+Task 27 adds a greenfield Next.js App Router frontend under `frontend/` with
+TypeScript, Tailwind CSS, TanStack Query, React Hook Form, Zod, and a focused
+component system. It provides registration/login, responsive project
+navigation, project creation, document upload with chunker selection, live
+ingestion stage rendering, durable refresh recovery, failed-run retry, streamed
+RAG chat, source inspection, query history, and ranked retrieval traces.
+
+Authentication is exchanged through Next.js route handlers and stored in an
+HttpOnly cookie. A same-origin proxy forwards JSON, multipart uploads, and SSE
+streams to FastAPI without exposing the JWT to browser JavaScript. Ingestion
+reconnection persists `Last-Event-ID`, replays available events, and falls back
+to the durable run-status endpoint.
+
+Supporting FastAPI endpoints list recent tenant-owned ingestion runs, retry
+failed runs from their existing Bronze object, list project query history, and
+return one query with chunk/document retrieval metadata. Frontend tests cover
+loading, empty, success, backend validation failure, durable ingestion failure,
+SSE fragmentation, terminal completion, and reconnect recovery. The production
+Next.js image is part of Docker Compose and CI runs lint, tests, and builds.
 
 ---
 

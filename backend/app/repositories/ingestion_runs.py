@@ -54,6 +54,55 @@ async def get_owned_ingestion_run(
     return result.scalar_one_or_none()
 
 
+async def list_owned_project_runs(
+    db: AsyncSession,
+    project_id: str,
+    user_id: str,
+    *,
+    limit: int = 50,
+) -> list[IngestionRun]:
+    result = await db.execute(
+        select(IngestionRun)
+        .where(
+            IngestionRun.project_id == project_id,
+            IngestionRun.created_by == user_id,
+        )
+        .order_by(IngestionRun.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def retry_failed_ingestion_run(
+    db: AsyncSession,
+    ingestion_run_id: str,
+) -> IngestionRun | None:
+    run = await get_ingestion_run(db, ingestion_run_id)
+    if run is None:
+        return None
+    if run.status != "failed":
+        raise ValueError("Only failed ingestion runs can be retried")
+
+    run.status = "queued"
+    run.started_at = None
+    run.finished_at = None
+    run.error_message = None
+    run.airflow_dag_run_id = None
+
+    document = await db.get(Document, run.document_id)
+    version = await db.get(DocumentVersion, run.document_version_id)
+    if document is not None:
+        document.status = "landed"
+    if version is not None:
+        version.status = "landed"
+        version.error_message = None
+        version.silver_path = None
+        version.gold_path = None
+
+    await db.flush()
+    return run
+
+
 async def update_ingestion_status(
     db: AsyncSession,
     ingestion_run_id: str,

@@ -1,6 +1,7 @@
 import time
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, Header, HTTPException, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, Header, HTTPException, Depends, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import StreamingResponse
@@ -418,6 +419,9 @@ class IngestionRunResponse(BaseModel):
     airflow_dag_run_id: str | None
     error_message: str | None
     progress: IngestionProgress
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
 
 
 def _ingestion_run_payload(run, version) -> dict:
@@ -430,6 +434,9 @@ def _ingestion_run_payload(run, version) -> dict:
         "status": run.status,
         "airflow_dag_run_id": run.airflow_dag_run_id,
         "error_message": run.error_message,
+        "created_at": getattr(run, "created_at", datetime.now(timezone.utc)),
+        "started_at": getattr(run, "started_at", None),
+        "finished_at": getattr(run, "finished_at", None),
         "progress": {
             "bronze": bool(version.bronze_path),
             "silver": bool(version.silver_path) or silver_complete,
@@ -553,6 +560,62 @@ async def get_ingestion_run_status(
     if version is None:
         raise HTTPException(500, "Ingestion run has no document version")
 
+    return _ingestion_run_payload(run, version)
+
+
+@router.get("/runs", response_model=list[IngestionRunResponse])
+async def list_ingestion_runs(
+    project_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    await _get_project(project_id, user["user_id"], db)
+    runs = await ingestion_repository.list_owned_project_runs(
+        db,
+        project_id,
+        user["user_id"],
+        limit=limit,
+    )
+    payloads: list[dict] = []
+    for run in runs:
+        version = await version_repository.get_document_version(db, run.document_version_id)
+        if version is not None:
+            payloads.append(_ingestion_run_payload(run, version))
+    return payloads
+
+
+@router.post("/runs/{ingestion_run_id}/retry", response_model=IngestionRunResponse)
+async def retry_ingestion_run(
+    ingestion_run_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    run = await ingestion_repository.get_owned_ingestion_run(
+        db,
+        ingestion_run_id,
+        user["user_id"],
+    )
+    if run is None:
+        raise HTTPException(404, "Ingestion run not found")
+    try:
+        run = await ingestion_repository.retry_failed_ingestion_run(db, run.id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    await db.commit()
+    version = await version_repository.get_document_version(db, run.document_version_id)
+    if version is None:
+        raise HTTPException(500, "Ingestion run has no document version")
+
+    await publish_ingestion_event(
+        run.id,
+        "queued",
+        data={"document_id": run.document_id, "document_version_id": run.document_version_id},
+    )
+    if settings.AIRFLOW_API_URL:
+        background_tasks.add_task(enqueue_ingestion, run.id)
     return _ingestion_run_payload(run, version)
 
 

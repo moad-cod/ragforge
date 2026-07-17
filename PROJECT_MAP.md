@@ -7,7 +7,8 @@ The default backend is optimized for the text RAG path. Heavy optional features 
 ## Architecture
 
 ```text
-Client / Swagger UI
+Next.js control-plane UI / Swagger UI
+  -> HttpOnly session cookie + same-origin authenticated proxy
   -> FastAPI routers
   -> Auth / Organizations / Projects / Documents / Chunkers / Ingest / Query
   -> SQLAlchemy async + PostgreSQL control-plane metadata
@@ -22,6 +23,9 @@ Client / Swagger UI
 
 | Area | Files | Responsibility |
 |---|---|---|
+| Frontend app | `frontend/src/app/*` | Authenticated App Router pages, layouts, proxy routes, and responsive workspace |
+| Frontend features | `frontend/src/components/*`, `frontend/src/hooks/*` | Projects, documents, ingestion SSE recovery, streaming chat, query history, retrieval traces |
+| Frontend data | `frontend/src/lib/*` | Typed API client, SSE parser, shared control-plane types, session helpers |
 | App entry | `backend/app/main.py` | Creates the FastAPI app and mounts routers |
 | Config | `backend/app/core/config.py` | Loads `.env`, required URLs/secrets, optional LLM/R2 settings, limits |
 | Auth | `backend/app/core/auth.py`, `backend/app/api/auth.py` | JWT dependency, register, login, current-user read/update/delete |
@@ -116,6 +120,14 @@ backend/
   check_data.py
   cleanup.py
   tests/
+frontend/
+  Dockerfile
+  src/
+    app/
+    components/
+    hooks/
+    lib/
+    test/
 Data-Modeling/
   ControlPlane.md
   Tables.png
@@ -225,7 +237,7 @@ Airflow:    pipeline scheduling; ingestion_runs.airflow_dag_run_id provides trac
 
 Status validation is enforced twice: SQLAlchemy rejects invalid values before persistence, and PostgreSQL check constraints protect writes from any other client. Canonical values live in `backend/app/models/statuses.py`.
 
-## Control-Plane Runtime (Tasks 12–23, 25, and 26)
+## Control-Plane Runtime (Tasks 12–23 and 25–27)
 
 Tasks 12–23 add the migration, runtime consumers, deterministic seed data,
 database validation, and authenticated real-time delivery:
@@ -246,6 +258,7 @@ database validation, and authenticated real-time delivery:
 | 23 | Authenticated ingestion SSE snapshots/replay, Redis Stream fan-out with PostgreSQL recovery, shared streaming/non-streaming RAG execution, durable answers, and token/stage events |
 | 25 | Container-safe Bronze-to-Silver and Silver-to-Gold Parquet jobs, deterministic Gold-to-Qdrant indexing, durable artifact paths, retries, and failure propagation |
 | 26 | Isolated containerized upload-to-answer validation across API, PostgreSQL, MinIO, Airflow, Qdrant, Redis, SSE, provider failures, and tenant boundaries |
+| 27 | Next.js authenticated control plane with projects, uploads, durable ingestion recovery/retry, streamed RAG chat, history, and retrieval traces |
 
 The repository layer owns reusable database operations and does not commit implicitly. API routes and pipeline boundaries control transactions, allowing multi-row document/version/run creation to remain atomic.
 
@@ -261,6 +274,14 @@ uses a separate Compose project and volumes, alternate host ports, a local
 OpenAI-compatible provider, and deterministic embeddings. Public APIs drive
 the user flows; direct PostgreSQL, MinIO, Airflow, and Qdrant clients are used
 only to assert cross-system counts, paths, timestamps, ranks, and lineage.
+
+Task 27 adds a production-built Next.js service. Authentication is exchanged
+through Next.js route handlers and stored in an HttpOnly cookie; the browser
+never reads the FastAPI JWT. A path-preserving same-origin proxy forwards JSON,
+multipart uploads, and streaming SSE responses. Ingestion views reconnect with
+`Last-Event-ID` and recover through PostgreSQL status reads. The backend now
+also exposes tenant-owned recent runs, safe failed-run retries, query history,
+and ranked chunk/document retrieval traces.
 
 Airflow talks to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally keeps the application database runtime out of Airflow 3.3 task processes. The internal API delegates every write to the same ingestion repository used elsewhere. FastAPI authenticates through Airflow's `/auth/token` endpoint and triggers DAG runs through the Airflow 3 public `/api/v2` API.
 
@@ -476,7 +497,8 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 | `backend/Dockerfile` | Builds the default FastAPI runtime image from slim requirements |
 | `backend/.dockerignore` | Prevents local `.venv`, caches, `.env`, and Airflow logs from entering the image |
 | `backend/requirements.txt` | Slim runtime dependency list for default backend |
-| `docker-compose.yml` | Starts local Postgres, Qdrant, MinIO, Redis, FastAPI, and optional batch profile |
+| `frontend/Dockerfile` | Builds the standalone Next.js control-plane image |
+| `docker-compose.yml` | Starts Next.js, Postgres, Qdrant, MinIO, Redis, FastAPI, and optional batch profile |
 | `scripts/init_minio.sh` | Creates local MinIO buckets |
 | `backend/alembic.ini`, `backend/alembic/` | Reversible production schema migration and autogenerate metadata integration |
 | `backend/create_tables.py` | Legacy/development helper for creating missing tables directly from metadata |
@@ -494,6 +516,8 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 | `backend/tests/test_pipeline_artifacts.py` | Task 25 deterministic Silver/Gold Parquet, retry, empty input, and embedding mismatch tests |
 | `backend/tests/e2e/test_control_plane.py` | Task 26 containerized upload-to-answer, lineage, Redis recovery, failure, and tenant-isolation tests |
 | `scripts/e2e_v2.sh` | Isolated one-command Task 26 Compose orchestrator |
+| `frontend/src/**/*.test.tsx` | Task 27 loading, empty, success, failure, SSE parsing, and reconnect tests |
+| `.github/workflows/frontend.yml` | Frontend lint, test, and production-build gate |
 | `backend/tests/evaluate.py` | Evaluation helper for local experiments |
 
 ## Current Design Notes
@@ -505,4 +529,6 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 - The text ingestion endpoint rejects the `multimodal` chunker because multimodal has its own endpoint.
 - The registry is built for SaaS frontend display and does not expose callable paths publicly.
 - The default Docker image is intentionally text-RAG focused; optional multimodal and CrossEncoder rerank dependencies should be isolated.
-- The repository currently has no frontend; the API is ready for a frontend to consume `/chunkers` and the CRUD/RAG endpoints.
+- The frontend uses a same-origin Next.js proxy so JWTs remain in HttpOnly
+  cookies while authenticated POST and GET SSE streams retain header-based
+  FastAPI authorization.
