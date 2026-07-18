@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f5f7fb;
+  --surface: #ffffff;
+  --surface-muted: #f3f6fa;
+  --surface-dark: #101827;
+  --surface-dark-soft: #172236;
+  --ink: #101828;
+  --ink-muted: #5d6b82;
+  --ink-faint: #98a2b3;
+  --border: #e3e8ef;
+  --border-strong: #ccd5e2;
+  --accent: #4f46e5;
+  --accent-strong: #4338ca;
+  --accent-soft: #eef2ff;
+  --success: #079455;
+  --success-soft: #ecfdf3;
+  --warning: #dc6803;
+  --warning-soft: #fff7ed;
+  --danger: #d92d20;
+  --danger-soft: #fef3f2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(79, 70, 229, 0.06), transparent 26rem),
+    var(--background);
+  color: var(--ink);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: #c7d2fe;
+}
+
+.subtle-grid {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.markdown-answer {
+  color: #263244;
+  line-height: 1.75;
+}
+
+.markdown-answer p + p,
+.markdown-answer ul,
+.markdown-answer ol,
+.markdown-answer pre {
+  margin-top: 0.85rem;
+}
+
+.markdown-answer ul,
+.markdown-answer ol {
+  padding-left: 1.25rem;
+}
+
+.markdown-answer ul {
+  list-style: disc;
+}
+
+.markdown-answer ol {
+  list-style: decimal;
+}
+
+.markdown-answer code {
+  border-radius: 0.35rem;
+  background: #eef2f6;
+  padding: 0.1rem 0.3rem;
+  font-size: 0.9em;
+}
+
+.markdown-answer pre {
+  overflow: auto;
+  border-radius: 0.75rem;
+  background: #101827;
+  padding: 1rem;
+  color: #e2e8f0;
+}
+
+.markdown-answer pre code {
+  background: transparent;
+  padding: 0;
+}
