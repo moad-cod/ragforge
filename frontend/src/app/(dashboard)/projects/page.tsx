@@ -1,0 +1,166 @@
+"use client";
+
+import {zodResolver} from "@hookform/resolvers/zod";
+import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
+import {ArrowRight, FolderKanban, LoaderCircle, Plus, X} from "lucide-react";
+import Link from "next/link";
+import {useState} from "react";
+import {useForm} from "react-hook-form";
+import {toast} from "sonner";
+import {z} from "zod";
+import {PageHeader} from "@/components/page-header";
+import {Button} from "@/components/ui/button";
+import {Card} from "@/components/ui/card";
+import {EmptyState} from "@/components/ui/empty-state";
+import {Input} from "@/components/ui/input";
+import {apiFetch} from "@/lib/api";
+import type {Project} from "@/lib/types";
+import {relativeTime} from "@/lib/utils";
+
+const schema = z.object({
+  name: z.string().trim().min(2, "Project name is required").max(120),
+});
+type Values = z.infer<typeof schema>;
+
+export default function ProjectsPage() {
+  const queryClient = useQueryClient();
+  const [creating, setCreating] = useState(false);
+  const {data: projects = [], isLoading} = useQuery({
+    queryKey: ["projects"],
+    queryFn: () => apiFetch<Project[]>("/projects/"),
+  });
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: {errors},
+  } = useForm<Values>({resolver: zodResolver(schema)});
+  const createProject = useMutation({
+    mutationFn: (values: Values) =>
+      apiFetch<Project>("/projects/", {
+        method: "POST",
+        body: JSON.stringify(values),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({queryKey: ["projects"]});
+      reset();
+      setCreating(false);
+      toast.success("Project created");
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Unable to create project"),
+  });
+
+  return (
+    <div className="space-y-8">
+      <PageHeader
+        eyebrow="Workspace"
+        title="Projects"
+        description="Each project is an isolated knowledge base with its own documents, vector collection, and query history."
+        actions={
+          <Button onClick={() => setCreating(true)}>
+            <Plus className="size-4" />
+            New project
+          </Button>
+        }
+      />
+
+      {isLoading ? (
+        <div
+          className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
+          aria-label="Loading projects"
+        >
+          {[1, 2, 3].map((item) => (
+            <div
+              key={item}
+              className="h-48 animate-pulse rounded-2xl border border-[var(--border)] bg-white"
+            />
+          ))}
+        </div>
+      ) : projects.length ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {projects.map((project) => (
+            <Card
+              key={project.project_id}
+              className="group p-5 transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-lg hover:shadow-indigo-950/5"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex size-11 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
+                  <FolderKanban className="size-5" />
+                </div>
+                <span className="text-xs text-[var(--ink-faint)]">
+                  {relativeTime(project.updated_at)}
+                </span>
+              </div>
+              <h2 className="mt-5 truncate text-lg font-semibold">{project.name}</h2>
+              <p className="mt-2 line-clamp-2 text-sm leading-6 text-[var(--ink-muted)]">
+                Upload documents, observe ingestion, and ask grounded questions
+                inside this isolated project.
+              </p>
+              <Link
+                href={`/projects/${project.project_id}/documents`}
+                className="mt-5 flex items-center justify-between border-t border-[var(--border)] pt-4 text-sm font-semibold text-[var(--accent)]"
+              >
+                Open workspace
+                <ArrowRight className="size-4 transition group-hover:translate-x-1" />
+              </Link>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <EmptyState
+          icon={FolderKanban}
+          title="No projects yet"
+          description="Create your first project to start building a searchable, observable knowledge base."
+          action="Create project"
+          onAction={() => setCreating(true)}
+        />
+      )}
+
+      {creating ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm">
+          <Card className="w-full max-w-md p-6 shadow-2xl">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-xl font-semibold">Create project</h2>
+                <p className="mt-1 text-sm text-[var(--ink-muted)]">
+                  A dedicated vector collection will be created automatically.
+                </p>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setCreating(false)}>
+                <X className="size-4" />
+              </Button>
+            </div>
+            <form
+              className="mt-6"
+              onSubmit={handleSubmit((values) => createProject.mutate(values))}
+            >
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium">Project name</span>
+                <Input autoFocus placeholder="Product knowledge base" {...register("name")} />
+                {errors.name ? (
+                  <span className="mt-1.5 block text-xs text-[var(--danger)]">
+                    {errors.name.message}
+                  </span>
+                ) : null}
+              </label>
+              <div className="mt-6 flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => setCreating(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={createProject.isPending}>
+                  {createProject.isPending ? (
+                    <LoaderCircle className="size-4 animate-spin" />
+                  ) : (
+                    <Plus className="size-4" />
+                  )}
+                  Create project
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      ) : null}
+    </div>
+  );
+}
