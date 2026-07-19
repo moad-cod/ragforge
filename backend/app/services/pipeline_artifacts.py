@@ -125,6 +125,7 @@ def build_silver_rows(
     parser: Callable[[bytes, str], list[str]] | None = None,
     chunker_loader: Callable[[str], Callable[[str], list[str]]] | None = None,
 ) -> list[dict[str, Any]]:
+    use_builtin_chunker = chunker_loader is None
     if parser is None:
         from app.services.parser import parse_document
 
@@ -135,7 +136,14 @@ def build_silver_rows(
         chunker_loader = get_chunker
 
     parsed_sections = parser(raw_bytes, filename)
-    chunks = chunker_loader(chunker_id)("\n\n".join(parsed_sections))
+    full_text = "\n\n".join(parsed_sections)
+    precomputed_vectors = None
+    if chunker_id == "late_chunking" and use_builtin_chunker:
+        from app.services.chunkers.late_chunking import chunk_with_embeddings
+
+        chunks, precomputed_vectors = chunk_with_embeddings(full_text)
+    else:
+        chunks = chunker_loader(chunker_id)(full_text)
     rows = []
     for index, chunk in enumerate(chunks):
         text = str(getattr(chunk, "text", chunk)).strip()
@@ -153,6 +161,11 @@ def build_silver_rows(
                 "metadata_json": json.dumps(
                     {"parser_filename": filename, "chunker_id": chunker_id},
                     sort_keys=True,
+                ),
+                "precomputed_dense_vector": (
+                    [float(value) for value in precomputed_vectors[index]]
+                    if precomputed_vectors is not None
+                    else None
                 ),
             }
         )
