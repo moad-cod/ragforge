@@ -128,9 +128,9 @@ def ragforge_ingestion():
         return ingestion
 
     @task(on_failure_callback=mark_task_failure)
-    def upsert_qdrant(ingestion_run_id: str) -> str:
-        _run_configured_job("RAGFORGE_UPSERT_QDRANT_CMD", ingestion_run_id)
-        return ingestion_run_id
+    def upsert_qdrant(ingestion: dict) -> dict:
+        _run_configured_job("RAGFORGE_UPSERT_QDRANT_CMD", ingestion)
+        return ingestion
 
     @task(on_failure_callback=mark_task_failure)
     def update_postgres_status(ingestion_run_id: str) -> None:
