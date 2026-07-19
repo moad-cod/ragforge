@@ -83,12 +83,21 @@ def _run_configured_job(
 )
 def ragforge_ingestion():
     @task(on_failure_callback=mark_task_failure)
-    def validate_bronze() -> str:
+    def detect_ingestion_technique() -> dict:
         context = get_current_context()
         ingestion_run_id = ingestion_run_id_from_context(context)
         run = RAGForgeControlPlane().get_run(ingestion_run_id)
         if run["status"] not in {"landed", "queued", "running"}:
             raise ValueError(f"Run cannot start from status {run['status']!r}")
+        plan = run.get("ingestion_plan")
+        if not plan:
+            raise ValueError("Control plane did not return an ingestion plan")
+        logger.info(
+            "Detected ingestion technique=%s profile=%s: %s",
+            plan["technique_id"],
+            plan["profile"],
+            plan["rationale"],
+        )
         record_task_status(context, "running")
         return ingestion_run_id
 
