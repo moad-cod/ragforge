@@ -29,7 +29,21 @@ def _run_configured_job(
     command_template = os.environ.get(selected_environment, "").strip()
     if not command_template:
         raise RuntimeError(f"{environment_name} must be configured for the ingestion DAG")
-    command = command_template.format(ingestion_run_id=ingestion_run_id)
+    command = command_template.format(
+        ingestion_run_id=ingestion_run_id,
+        profile=plan["profile"],
+        chunker_id=plan["technique_id"],
+        source_type=plan["source_type"],
+    )
+    job_environment = build_job_environment(plan)
+    logger.info(
+        "Running %s with profile=%s technique=%s resource_class=%s batch_size=%s",
+        selected_environment,
+        plan["profile"],
+        plan["technique_id"],
+        plan["resource_class"],
+        plan["embedding_batch_size"],
+    )
     try:
         completed = subprocess.run(
             shlex.split(command),
