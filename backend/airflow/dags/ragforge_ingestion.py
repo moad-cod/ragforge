@@ -7,6 +7,7 @@ import shlex
 import subprocess
 
 from airflow.sdk import dag, get_current_context, task
+from jobs.ingestion_execution import build_job_environment, profile_environment_name
 
 from ragforge_control_plane import (
     RAGForgeControlPlane,
