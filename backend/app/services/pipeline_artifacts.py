@@ -227,13 +227,42 @@ def silver_to_gold(
         from app.services.embedder import embed_texts
 
         embedder = embed_texts
-    embeddings = embedder([row["text"] for row in rows])
+    precomputed = [row.get("precomputed_dense_vector") for row in rows]
+    reused_precomputed_embeddings = any(vector is not None for vector in precomputed)
+    embedding_batches = 0
+    if reused_precomputed_embeddings:
+        if not all(vector for vector in precomputed):
+            raise ValueError("Silver artifact contains incomplete precomputed embeddings")
+        embeddings = [list(vector) for vector in precomputed]
+    else:
+        plan = run.get("ingestion_plan") or {}
+        configured_batch_size = plan.get("embedding_batch_size")
+        if configured_batch_size is None:
+            batch_size = len(rows)
+        else:
+            try:
+                batch_size = int(configured_batch_size)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("ingestion_plan.embedding_batch_size must be an integer") from exc
+            if batch_size <= 0:
+                raise ValueError("ingestion_plan.embedding_batch_size must be positive")
+
+        embeddings: list[list[float]] = []
+        texts = [row["text"] for row in rows]
+        for start in range(0, len(texts), batch_size):
+            embeddings.extend(embedder(texts[start:start + batch_size]))
+            embedding_batches += 1
     if len(embeddings) != len(rows):
         raise ValueError("Embedding model returned an unexpected number of vectors")
-    gold_rows = [
-        {**row, "dense_vector": [float(value) for value in vector]}
-        for row, vector in zip(rows, embeddings)
-    ]
+    gold_rows = []
+    for row, vector in zip(rows, embeddings):
+        gold_row = {
+            key: value
+            for key, value in row.items()
+            if key != "precomputed_dense_vector"
+        }
+        gold_row["dense_vector"] = [float(value) for value in vector]
+        gold_rows.append(gold_row)
     bronze_path = run.get("bronze_path")
     if not bronze_path:
         raise ValueError("Ingestion metadata has no Bronze path")
@@ -247,7 +276,12 @@ def silver_to_gold(
         _write_parquet(gold_rows, _gold_schema()),
         "application/vnd.apache.parquet",
     )
-    return {"artifact_path": gold_path, "chunks": len(gold_rows)}
+    return {
+        "artifact_path": gold_path,
+        "chunks": len(gold_rows),
+        "embedding_batches": embedding_batches,
+        "reused_precomputed_embeddings": reused_precomputed_embeddings,
+    }
 
 
 def gold_chunks(run: dict[str, Any], *, store: ArtifactStore | None = None) -> list[dict]:
