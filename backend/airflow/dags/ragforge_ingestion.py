@@ -55,9 +55,11 @@ def _run_configured_job(
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
         suffix = f": {detail}" if detail else ""
-        raise RuntimeError(f"{environment_name} failed with exit code {exc.returncode}{suffix}") from exc
+        raise RuntimeError(
+            f"{selected_environment} failed with exit code {exc.returncode}{suffix}"
+        ) from exc
     if completed.stderr.strip():
-        logger.info("%s stderr:\n%s", environment_name, completed.stderr.rstrip())
+        logger.info("%s stderr:\n%s", selected_environment, completed.stderr.rstrip())
     lines = [line for line in completed.stdout.splitlines() if line.strip()]
     if not lines:
         raise RuntimeError(f"{environment_name} did not return a JSON result")
@@ -65,7 +67,7 @@ def _run_configured_job(
         result = json.loads(lines[-1])
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"{environment_name} returned invalid JSON: {lines[-1]!r}") from exc
-    logger.info("%s result: %s", environment_name, result)
+    logger.info("%s result: %s", selected_environment, result)
     return result
 
 
