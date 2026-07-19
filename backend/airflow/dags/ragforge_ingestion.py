@@ -102,8 +102,8 @@ def ragforge_ingestion():
         return {"ingestion_run_id": ingestion_run_id, "ingestion_plan": plan}
 
     @task(on_failure_callback=mark_task_failure)
-    def bronze_to_silver_spark(ingestion_run_id: str) -> str:
-        result = _run_configured_job("RAGFORGE_BRONZE_TO_SILVER_CMD", ingestion_run_id)
+    def bronze_to_silver(ingestion: dict) -> dict:
+        result = _run_configured_job("RAGFORGE_BRONZE_TO_SILVER_CMD", ingestion)
         artifact_path = result.get("artifact_path")
         if not artifact_path:
             raise RuntimeError("Bronze-to-Silver job did not return artifact_path")
@@ -112,11 +112,11 @@ def ragforge_ingestion():
             "silver_completed",
             silver_path=artifact_path,
         )
-        return ingestion_run_id
+        return ingestion
 
     @task(on_failure_callback=mark_task_failure)
-    def silver_to_gold_embed(ingestion_run_id: str) -> str:
-        result = _run_configured_job("RAGFORGE_SILVER_TO_GOLD_CMD", ingestion_run_id)
+    def silver_to_gold_embed(ingestion: dict) -> dict:
+        result = _run_configured_job("RAGFORGE_SILVER_TO_GOLD_CMD", ingestion)
         artifact_path = result.get("artifact_path")
         if not artifact_path:
             raise RuntimeError("Silver-to-Gold job did not return artifact_path")
