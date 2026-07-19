@@ -10,6 +10,7 @@ from app.models import Document, DocumentVersion, Project
 from app.repositories import ingestion_runs as ingestion_repository
 from app.services.chunk_indexing import GoldChunk, index_document_version_chunks
 from app.services.event_stream import publish_ingestion_event
+from app.services.ingestion_planner import build_ingestion_plan
 
 
 router = APIRouter()
@@ -84,6 +85,10 @@ def _run_payload(run, *, project=None, document=None, version=None) -> dict:
             }
         )
     if version is not None:
+        ingestion_plan = build_ingestion_plan(
+            version.chunker_id,
+            source_type=document.source_type if document is not None else None,
+        )
         payload.update(
             {
                 "version_number": version.version_number,
@@ -93,6 +98,7 @@ def _run_payload(run, *, project=None, document=None, version=None) -> dict:
                 "parser_name": version.parser_name,
                 "chunker_id": version.chunker_id,
                 "embedding_model": version.embedding_model,
+                "ingestion_plan": ingestion_plan.as_dict(),
             }
         )
     return payload
