@@ -19,8 +19,14 @@ from ragforge_control_plane import (
 logger = logging.getLogger(__name__)
 
 
-def _run_configured_job(environment_name: str, ingestion_run_id: str) -> dict:
-    command_template = os.environ.get(environment_name, "").strip()
+def _run_configured_job(
+    environment_name: str,
+    ingestion: dict,
+) -> dict:
+    ingestion_run_id = ingestion["ingestion_run_id"]
+    plan = ingestion["ingestion_plan"]
+    selected_environment = profile_environment_name(environment_name, plan)
+    command_template = os.environ.get(selected_environment, "").strip()
     if not command_template:
         raise RuntimeError(f"{environment_name} must be configured for the ingestion DAG")
     command = command_template.format(ingestion_run_id=ingestion_run_id)
