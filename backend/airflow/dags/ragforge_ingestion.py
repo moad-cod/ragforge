@@ -50,6 +50,7 @@ def _run_configured_job(
             check=True,
             capture_output=True,
             text=True,
+            env=job_environment,
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
