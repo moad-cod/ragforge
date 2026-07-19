@@ -136,8 +136,8 @@ def ragforge_ingestion():
     def update_postgres_status(_ingestion: dict) -> None:
         record_task_status(get_current_context(), "indexed")
 
-    bronze = validate_bronze()
-    silver = bronze_to_silver_spark(bronze)
+    technique = detect_ingestion_technique()
+    silver = bronze_to_silver(technique)
     gold = silver_to_gold_embed(silver)
     indexed = upsert_qdrant(gold)
     update_postgres_status(indexed)
