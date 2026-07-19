@@ -125,7 +125,7 @@ def ragforge_ingestion():
             "gold_completed",
             gold_path=artifact_path,
         )
-        return ingestion_run_id
+        return ingestion
 
     @task(on_failure_callback=mark_task_failure)
     def upsert_qdrant(ingestion_run_id: str) -> str:
