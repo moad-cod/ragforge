@@ -99,7 +99,7 @@ def ragforge_ingestion():
             plan["rationale"],
         )
         record_task_status(context, "running")
-        return ingestion_run_id
+        return {"ingestion_run_id": ingestion_run_id, "ingestion_plan": plan}
 
     @task(on_failure_callback=mark_task_failure)
     def bronze_to_silver_spark(ingestion_run_id: str) -> str:
