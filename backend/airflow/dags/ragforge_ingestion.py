@@ -133,7 +133,7 @@ def ragforge_ingestion():
         return ingestion
 
     @task(on_failure_callback=mark_task_failure)
-    def update_postgres_status(ingestion_run_id: str) -> None:
+    def update_postgres_status(_ingestion: dict) -> None:
         record_task_status(get_current_context(), "indexed")
 
     bronze = validate_bronze()
