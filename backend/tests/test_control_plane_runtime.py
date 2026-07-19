@@ -264,6 +264,8 @@ class ControlPlaneRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["chunker_id"], "paragraph")
         self.assertEqual(response["filename"], "sample.txt")
         self.assertEqual(response["qdrant_collection"], "project_collection")
+        self.assertEqual(response["ingestion_plan"]["technique_id"], "paragraph")
+        self.assertEqual(response["ingestion_plan"]["profile"], "throughput")
 
     async def test_pipeline_can_index_gold_chunks_for_an_ingestion_run(self):
         run = SimpleNamespace(
