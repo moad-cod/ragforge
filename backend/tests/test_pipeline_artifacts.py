@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import Mock, patch
 
 from app.services.pipeline_artifacts import (
     bronze_to_silver,
@@ -113,6 +114,64 @@ class PipelineArtifactTests(unittest.TestCase):
             "gold/org_id=o/project_id=p/document_id=d/version=1/embedded_chunks.parquet",
             self.store.objects,
         )
+
+    def test_gold_embedding_uses_plan_batch_size(self):
+        silver = bronze_to_silver(
+            self.run,
+            store=self.store,
+            parser=lambda _data, _filename: ["source"],
+            chunker_loader=lambda _chunker_id: (
+                lambda _text: [f"chunk {index}" for index in range(5)]
+            ),
+        )
+        self.run["silver_path"] = silver["artifact_path"]
+        self.run["ingestion_plan"] = {"embedding_batch_size": 2}
+        batch_sizes = []
+
+        def embed(texts):
+            batch_sizes.append(len(texts))
+            return [[float(len(text)), 0.5] for text in texts]
+
+        gold = silver_to_gold(self.run, store=self.store, embedder=embed)
+
+        self.assertEqual(gold["chunks"], 5)
+        self.assertEqual(batch_sizes, [2, 2, 1])
+
+    def test_invalid_plan_batch_size_fails_cleanly(self):
+        silver = bronze_to_silver(
+            self.run,
+            store=self.store,
+            parser=lambda _data, _filename: ["source"],
+            chunker_loader=lambda _chunker_id: lambda _text: ["indexable chunk"],
+        )
+        self.run["silver_path"] = silver["artifact_path"]
+        self.run["ingestion_plan"] = {"embedding_batch_size": 0}
+
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            silver_to_gold(self.run, store=self.store, embedder=lambda _texts: [])
+
+    def test_late_chunking_reuses_contextual_embeddings_in_gold(self):
+        self.run["chunker_id"] = "late_chunking"
+        with patch(
+            "app.services.chunkers.late_chunking.chunk_with_embeddings",
+            return_value=(["contextual chunk"], [[0.25, 0.75]]),
+        ):
+            silver = bronze_to_silver(
+                self.run,
+                store=self.store,
+                parser=lambda _data, _filename: ["source"],
+            )
+        self.run["silver_path"] = silver["artifact_path"]
+        embedder = Mock(side_effect=AssertionError("late vectors must not be recomputed"))
+
+        gold = silver_to_gold(self.run, store=self.store, embedder=embedder)
+        self.run["gold_path"] = gold["artifact_path"]
+        chunks = gold_chunks(self.run, store=self.store)
+
+        embedder.assert_not_called()
+        self.assertTrue(gold["reused_precomputed_embeddings"])
+        self.assertEqual(gold["embedding_batches"], 0)
+        self.assertEqual(chunks[0]["dense_vector"], [0.25, 0.75])
 
     def test_unknown_embedding_model_fails_instead_of_mislabeling_gold(self):
         silver = bronze_to_silver(
