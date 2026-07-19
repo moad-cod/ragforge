@@ -85,13 +85,23 @@ def _silver_schema():
             ("page_end", pa.int64()),
             ("section_title", pa.string()),
             ("metadata_json", pa.string()),
+            # Late chunking creates context-aware vectors while it identifies
+            # chunk boundaries. Preserve them so Gold does not recompute a
+            # less contextual embedding for the same text.
+            ("precomputed_dense_vector", pa.list_(pa.float32())),
         ]
     )
 
 
 def _gold_schema():
     pa, _pq = _parquet_modules()
-    return _silver_schema().append(pa.field("dense_vector", pa.list_(pa.float32())))
+    return pa.schema(
+        [
+            field
+            for field in _silver_schema()
+            if field.name != "precomputed_dense_vector"
+        ]
+    ).append(pa.field("dense_vector", pa.list_(pa.float32())))
 
 
 def _write_parquet(rows: Sequence[dict[str, Any]], schema) -> bytes:
