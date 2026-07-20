@@ -294,7 +294,23 @@ and ranked chunk/document retrieval traces.
 
 Airflow talks to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally keeps the application database runtime out of Airflow 3.3 task processes. The internal API delegates every write to the same ingestion repository used elsewhere. FastAPI authenticates through Airflow's `/auth/token` endpoint and triggers DAG runs through the Airflow 3 public `/api/v2` API.
 
-The `ragforge_ingestion` DAG exposes the Task 17 sequence (`validate_bronze`, `bronze_to_silver_spark`, `silver_to_gold_embed`, `upsert_qdrant`, `update_postgres_status`). Transformation commands are configured through environment variables and receive `{ingestion_run_id}`; a missing command fails the run instead of falsely advancing its durable status. The Task 18 indexing boundary accepts embedded Gold chunks at `POST /internal/pipeline/ingestion-runs/{id}/chunks/index`, rebuilds that version's Qdrant points, and atomically replaces its PostgreSQL chunk rows.
+The `ragforge_ingestion` DAG now runs `detect_ingestion_technique`, `bronze_to_silver`, `silver_to_gold_embed`, `upsert_qdrant`, and `update_postgres_status`. The first task reads durable run/version/document metadata through the control-plane API, receives an `ingestion_plan`, records the run as `running`, and passes the plan through Airflow task outputs. Transformation commands receive `{ingestion_run_id}`, `{profile}`, `{chunker_id}`, and `{source_type}`. A missing command fails the run instead of falsely advancing its durable status. The Task 18 indexing boundary accepts embedded Gold chunks at `POST /internal/pipeline/ingestion-runs/{id}/chunks/index`, rebuilds that version's Qdrant points, and atomically replaces its PostgreSQL chunk rows.
+
+### Adaptive ingestion execution
+
+`backend/app/services/ingestion_planner.py` is the single policy layer that translates the persisted `DocumentVersion.chunker_id` and `Document.source_type` into execution hints. `GET /internal/pipeline/ingestion-runs/{id}` includes this plan without requiring a database migration; the decision is recomputed from durable metadata each time.
+
+| Technique | Profile | Resource class | Embedding batch | Max parallelism | Optimization intent |
+|---|---|---|---:|---:|---|
+| `fixed_size`, `paragraph`, `sentence` | `throughput` | CPU | 192 | 4 | Larger batches for lightweight deterministic chunking |
+| `hierarchical` | `structured` | CPU | 96 | 2 | Moderate batches for parent/child expansion |
+| `semantic`, `late_chunking` | `embedding_aware` | high-memory CPU | 48 | 1 | Bound memory while a chunking model is already loaded |
+| `proposition` | `llm_enriched` | network | 32 | 1 | Serialize rate-limit-sensitive LLM chunking |
+| `multimodal` source/technique | `multimodal` | GPU | 2 | 1 | Keep visual multi-vector batches small |
+
+`backend/jobs/ingestion_execution.py` first looks for a profile-specific command such as `RAGFORGE_SILVER_TO_GOLD_EMBEDDING_AWARE_CMD`, then falls back to `RAGFORGE_SILVER_TO_GOLD_CMD` for backward compatibility. It exports the selected plan to worker processes as `RAGFORGE_INGESTION_PROFILE`, `RAGFORGE_INGESTION_TECHNIQUE`, `RAGFORGE_INGESTION_RESOURCE_CLASS`, `RAGFORGE_EMBEDDING_BATCH_SIZE`, and `RAGFORGE_INGESTION_MAX_PARALLELISM`.
+
+The built-in Gold transformation consumes the planned embedding batch size instead of embedding every chunk at once. Late chunking also preserves its context-aware dense vectors in Silver Parquet and reuses them in Gold, avoiding a second, less contextual embedding pass. Other techniques leave `precomputed_dense_vector` empty and use the normal batched embedder.
 
 Qdrant only accepts unsigned integers or UUIDs as point IDs. RAGForge therefore preserves the readable `{document_version_id}:{chunk_index}` key as `lineage_id` in every payload and derives the actual Qdrant/PostgreSQL `qdrant_point_id` deterministically with UUIDv5. Replaying the same Gold artifact produces the same chunk and point IDs; old points for that document version are removed before the rebuilt set is upserted.
 
@@ -380,8 +396,10 @@ Optional multimodal ColPali and CrossEncoder reranking should be added through a
 5. One transaction creates `DocumentVersion(status=landed)` and `IngestionRun(status=landed)`.
 6. The API returns HTTP 202 with document, version, and ingestion-run IDs; it does not parse/embed/index in the request.
 7. When `AIRFLOW_API_URL` is configured, a post-response task triggers `ragforge_ingestion` and records its DAG-run ID/status as `queued`.
-8. Airflow parses/chunks Bronze into Silver Parquet, embeds Silver into Gold Parquet, and indexes Gold through the internal Qdrant boundary.
-9. PostgreSQL advances at `running`, `silver_completed`, `gold_completed`, and `indexed` only after each data-plane boundary succeeds; failures durably store their command error.
+8. Airflow fetches the run metadata and detects the ingestion technique from the persisted chunker/source, producing a deterministic execution profile.
+9. Profile-specific commands are used when configured; otherwise the generic Bronze/Silver/Gold/Qdrant commands remain the fallback.
+10. Airflow parses/chunks Bronze into Silver Parquet, embeds Silver in planner-sized batches into Gold Parquet, and indexes Gold through the internal Qdrant boundary. Late chunking reuses vectors computed during chunk boundary detection.
+11. PostgreSQL advances at `running`, `silver_completed`, `gold_completed`, and `indexed` only after each data-plane boundary succeeds; failures durably store their command error.
 
 URL, Google Drive, and optional multimodal endpoints retain their existing synchronous implementation for now. Heavy operations on those paths remain offloaded with `asyncio.to_thread` where applicable.
 
