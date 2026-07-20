@@ -94,7 +94,8 @@ button { cursor: pointer; }
   outline-offset: 2px;
 }
 
-.markdown-answer pre code {
-  background: transparent;
-  padding: 0;
+@keyframes citation-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(32, 201, 130, 0.65); }
+  50% { box-shadow: 0 0 0 4px rgba(32, 201, 130, 0.08); }
 }
+.citation-highlight { animation: citation-pulse 1.6s ease-in-out 2; }
