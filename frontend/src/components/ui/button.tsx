@@ -21,7 +21,7 @@ export function Button({
         variant === "primary" &&
           "bg-[var(--accent)] text-white shadow-sm hover:bg-[var(--accent-strong)]",
         variant === "secondary" &&
-          "border border-[var(--border)] bg-white text-[var(--ink)] hover:bg-[var(--surface-muted)]",
+          "border border-[var(--border)] bg-[var(--surface-muted)] text-[var(--ink)] hover:bg-[var(--surface-hover)]",
         variant === "ghost" &&
           "text-[var(--ink-muted)] hover:bg-[var(--surface-muted)] hover:text-[var(--ink)]",
         variant === "danger" &&
