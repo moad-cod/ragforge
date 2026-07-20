@@ -67,29 +67,25 @@ function RailButton({label, active, icon: Icon, onClick}: {
 export function AppShell({children}: {children: React.ReactNode}) {
   const pathname = usePathname();
   const router = useRouter();
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const projectId = projectIdFromPath(pathname);
-  const {data: user} = useQuery({
-    queryKey: ["me"],
-    queryFn: () => apiFetch<User>("/auth/me"),
-  });
-  const {data: projects = []} = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => apiFetch<Project[]>("/projects/"),
-  });
-  const selectedProject = useMemo(
-    () => projects.find((project) => project.project_id === projectId),
-    [projectId, projects],
-  );
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const {data: user} = useQuery({queryKey: ["me"], queryFn: () => apiFetch<User>("/auth/me")});
+  const {data: projects = []} = useQuery({queryKey: ["projects"], queryFn: () => apiFetch<Project[]>("/projects/")});
+  const project = useMemo(() => projects.find((item) => item.project_id === projectId), [projectId, projects]);
+  const isWorkspace = Boolean(projectId);
 
-  const nav = projectId
-    ? [
-        {href: `/projects/${projectId}/documents`, label: "Documents", icon: Files},
-        {href: `/projects/${projectId}/chat`, label: "Ask RAGForge", icon: MessageSquareText},
-        {href: `/projects/${projectId}/history`, label: "Query history", icon: History},
-      ]
-    : [];
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+      if (event.key === "Escape") setSearchOpen(false);
+    };
+    window.addEventListener("keydown", listener);
+    return () => window.removeEventListener("keydown", listener);
+  }, []);
 
   async function logout() {
     await authFetch("/logout");
