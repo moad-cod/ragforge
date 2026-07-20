@@ -2,21 +2,27 @@
 
 import {useQuery} from "@tanstack/react-query";
 import {
+  BarChart3,
+  Bell,
+  Blocks,
   ChevronDown,
-  Files,
+  CircleHelp,
+  Clock3,
+  Command,
+  FileStack,
   FolderKanban,
-  History,
   LogOut,
   Menu,
-  MessageSquareText,
-  Plus,
+  Moon,
+  Network,
+  Search,
+  Settings,
+  Sparkles,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import {usePathname, useRouter} from "next/navigation";
-import {useMemo, useState} from "react";
-import {Brand} from "@/components/brand";
-import {Button} from "@/components/ui/button";
+import {useEffect, useMemo, useState} from "react";
 import {apiFetch, authFetch} from "@/lib/api";
 import type {Project, User} from "@/lib/types";
 import {cn, initials} from "@/lib/utils";
