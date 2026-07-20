@@ -7,6 +7,13 @@ export type User = {
   updated_at: string | null;
 };
 
+export type Organization = {
+  organization_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Project = {
   project_id: string;
   organization_id: string | null;
