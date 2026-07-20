@@ -28,8 +28,40 @@ import type {Project, User} from "@/lib/types";
 import {cn, initials} from "@/lib/utils";
 
 function projectIdFromPath(pathname: string) {
-  const match = pathname.match(/^\/projects\/([^/]+)/);
-  return match?.[1] ?? null;
+  return pathname.match(/^\/projects\/([^/]+)/)?.[1] ?? null;
+}
+
+const nav = [
+  {label: "Workspace", icon: Blocks},
+  {label: "Projects", icon: FolderKanban, href: "/projects"},
+  {label: "Query history", icon: Clock3},
+  {label: "Pipeline runs", icon: Network},
+  {label: "Analytics", icon: BarChart3},
+  {label: "Settings", icon: Settings},
+];
+
+function RailButton({label, active, icon: Icon, onClick}: {
+  label: string;
+  active?: boolean;
+  icon: typeof Blocks;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={cn(
+        "group relative flex size-10 items-center justify-center rounded-[10px] text-[#71847b] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400",
+        active ? "bg-emerald-400/12 text-[#2bdf95]" : "hover:bg-white/[0.05] hover:text-[#c4d1cb]",
+      )}
+    >
+      <Icon className="size-[18px]" strokeWidth={1.8} />
+      <span className="pointer-events-none absolute left-[calc(100%+10px)] z-[80] hidden whitespace-nowrap rounded-md border border-white/10 bg-[#13251e] px-2 py-1.5 text-[11px] font-medium text-white shadow-xl group-hover:block">
+        {label}
+      </span>
+    </button>
+  );
 }
 
 export function AppShell({children}: {children: React.ReactNode}) {
