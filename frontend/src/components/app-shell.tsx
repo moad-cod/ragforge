@@ -93,159 +93,76 @@ export function AppShell({children}: {children: React.ReactNode}) {
     router.refresh();
   }
 
-  const sidebar = (
-    <div className="flex h-full flex-col">
-      <div className="flex h-20 items-center justify-between px-5">
-        <Brand inverse />
-        <button
-          className="text-slate-400 lg:hidden"
-          onClick={() => setMobileOpen(false)}
-          aria-label="Close navigation"
-        >
-          <X className="size-5" />
-        </button>
-      </div>
-
-      <div className="px-4">
-        <Link
-          href="/projects"
-          className={cn(
-            "flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition",
-            pathname === "/projects"
-              ? "bg-white/10 text-white"
-              : "text-slate-400 hover:bg-white/5 hover:text-white",
-          )}
-          onClick={() => setMobileOpen(false)}
-        >
-          <FolderKanban className="size-4.5" />
-          All projects
+  return (
+    <div className="h-dvh overflow-hidden bg-[#07110d] text-[#f1f5f3]">
+      <aside className="fixed inset-y-0 left-0 z-50 hidden w-[60px] flex-col items-center border-r border-white/[0.08] bg-[#08130f] py-3 md:flex">
+        <Link href="/projects" title="RAGForge" className="group mb-4 flex size-10 items-center justify-center rounded-xl bg-emerald-400 text-[#052116] shadow-[inset_0_0_0_1px_rgba(255,255,255,.18)]">
+          <Sparkles className="size-[19px]" strokeWidth={2.2} />
         </Link>
-      </div>
-
-      <div className="relative mx-4 mt-5">
-        <button
-          className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.04] px-3 py-3 text-left"
-          onClick={() => setProjectPickerOpen((open) => !open)}
-        >
-          <span className="min-w-0">
-            <span className="block text-[10px] font-semibold uppercase tracking-widest text-slate-500">
-              Active project
-            </span>
-            <span className="mt-1 block truncate text-sm font-medium text-slate-200">
-              {selectedProject?.name ?? "Choose a project"}
-            </span>
-          </span>
-          <ChevronDown className="size-4 text-slate-500" />
-        </button>
-        {projectPickerOpen ? (
-          <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-30 max-h-72 overflow-auto rounded-xl border border-slate-700 bg-[#172236] p-1.5 shadow-2xl">
-            {projects.map((project) => (
-              <Link
-                key={project.project_id}
-                href={`/projects/${project.project_id}/documents`}
-                className="block truncate rounded-lg px-3 py-2.5 text-sm text-slate-300 hover:bg-white/10 hover:text-white"
-                onClick={() => {
-                  setProjectPickerOpen(false);
-                  setMobileOpen(false);
-                }}
-              >
-                {project.name}
-              </Link>
-            ))}
-            <Link
-              href="/projects"
-              className="mt-1 flex items-center gap-2 rounded-lg border-t border-white/10 px-3 py-2.5 text-sm font-medium text-indigo-300 hover:bg-white/10"
-              onClick={() => {
-                setProjectPickerOpen(false);
-                setMobileOpen(false);
-              }}
-            >
-              <Plus className="size-4" />
-              New project
+        <div className="flex flex-col gap-1.5">
+          {nav.map((item, index) => item.href ? (
+            <Link key={item.label} href={item.href} aria-label={item.label} title={item.label} className="group relative">
+              <span className={cn("flex size-10 items-center justify-center rounded-[10px] text-[#71847b] transition hover:bg-white/[0.05] hover:text-[#c4d1cb]", !projectId && index === 1 && "bg-emerald-400/12 text-[#2bdf95]") }>
+                <item.icon className="size-[18px]" strokeWidth={1.8} />
+              </span>
             </Link>
-          </div>
-        ) : null}
-      </div>
-
-      {nav.length ? (
-        <nav className="mt-5 space-y-1 px-4">
-          {nav.map(({href, label, icon: Icon}) => (
-            <Link
-              key={href}
-              href={href}
-              className={cn(
-                "flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition",
-                pathname === href
-                  ? "bg-[var(--accent)] text-white shadow-lg shadow-indigo-950/20"
-                  : "text-slate-400 hover:bg-white/5 hover:text-white",
-              )}
-              onClick={() => setMobileOpen(false)}
-            >
-              <Icon className="size-4.5" />
-              {label}
-            </Link>
-          ))}
-        </nav>
-      ) : null}
-
-      <div className="mt-auto border-t border-white/10 p-4">
-        <div className="flex items-center gap-3 rounded-xl p-2">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-indigo-400/15 text-xs font-bold text-indigo-200">
-            {user ? initials(user.full_name, user.email) : "RF"}
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-slate-200">
-              {user?.full_name || "RAGForge user"}
-            </p>
-            <p className="truncate text-xs text-slate-500">{user?.email}</p>
-          </div>
-          <button
-            aria-label="Sign out"
-            className="rounded-lg p-2 text-slate-500 hover:bg-white/5 hover:text-white"
-            onClick={logout}
-          >
-            <LogOut className="size-4" />
+          ) : <RailButton key={item.label} {...item} active={Boolean(projectId) && index === 0} />)}
+        </div>
+        <div className="mt-auto flex flex-col items-center gap-1.5">
+          <RailButton label="Help center" icon={CircleHelp} />
+          <RailButton label="Dark theme" icon={Moon} />
+          <button aria-label="Sign out" title="Sign out" onClick={logout} className="relative mt-2 flex size-9 items-center justify-center rounded-full bg-[#26483b] text-[11px] font-semibold text-emerald-100 ring-2 ring-[#07110d] transition hover:ring-emerald-400/40">
+            {user ? initials(user.full_name, user.email) : "AH"}
+            <span className="absolute bottom-0 right-0 size-2.5 rounded-full border-2 border-[#08130f] bg-emerald-400" />
           </button>
         </div>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="min-h-screen">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-72 bg-[var(--surface-dark)] lg:block">
-        {sidebar}
       </aside>
-      {mobileOpen ? (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <button
-            className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm"
-            aria-label="Close navigation"
-            onClick={() => setMobileOpen(false)}
-          />
-          <aside className="relative h-full w-[85%] max-w-72 bg-[var(--surface-dark)]">
-            {sidebar}
-          </aside>
-        </div>
-      ) : null}
-      <div className="lg:pl-72">
-        <div className="sticky top-0 z-20 flex h-16 items-center border-b border-[var(--border)] bg-white/90 px-4 backdrop-blur lg:hidden">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setMobileOpen(true)}
-            aria-label="Open navigation"
-          >
-            <Menu className="size-5" />
-          </Button>
-          <span className="ml-2 truncate text-sm font-semibold">
-            {selectedProject?.name ?? "RAGForge"}
-          </span>
-        </div>
-        <main className="mx-auto min-h-screen max-w-[1500px] px-5 py-7 sm:px-8 sm:py-10">
-          {children}
-        </main>
+
+      <div className="flex h-full flex-col md:pl-[60px]">
+        <header className="z-40 flex h-[54px] shrink-0 items-center justify-between border-b border-white/[0.08] bg-[#09140f] px-3 md:px-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <button onClick={() => setMobileOpen(true)} className="flex size-8 items-center justify-center rounded-lg text-[#93a39c] hover:bg-white/5 md:hidden" aria-label="Open navigation"><Menu className="size-5" /></button>
+            <div className="hidden items-center gap-2 text-[12px] sm:flex">
+              <span className="text-[#64736d]">Organization</span><span className="text-[#40524a]">/</span>
+              <span className="max-w-40 truncate text-[#a9b7b0]">{project?.name ?? (isWorkspace ? "Research workspace" : "Projects")}</span>
+              {isWorkspace ? <><span className="text-[#40524a]">/</span><span className="text-[#f1f5f3]">Workspace</span></> : null}
+            </div>
+            {isWorkspace ? <span className="ml-1 hidden items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/[0.07] px-2 py-1 text-[10px] font-medium text-emerald-300 lg:flex"><span className="size-1.5 rounded-full bg-emerald-400" />Ready</span> : null}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => setSearchOpen(true)} className="hidden h-8 w-48 items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-2.5 text-left text-[11px] text-[#64736d] hover:border-white/[0.14] lg:flex">
+              <Search className="size-3.5" /><span className="flex-1">Search workspace</span><span className="flex items-center gap-0.5 rounded border border-white/10 px-1 py-0.5 text-[9px]"><Command className="size-2.5" />K</span>
+            </button>
+            <button aria-label="Notifications" className="relative flex size-8 items-center justify-center rounded-lg text-[#7f9188] hover:bg-white/5 hover:text-white"><Bell className="size-4" /><span className="absolute right-2 top-1.5 size-1.5 rounded-full bg-emerald-400" /></button>
+            <button className="hidden h-8 items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-2.5 text-[11px] text-[#cbd5d0] sm:flex">
+              <span className="flex size-4 items-center justify-center rounded bg-[#4285f4] text-[9px] font-bold text-white">G</span>Gemini 2.5 Flash<ChevronDown className="size-3 text-[#64736d]" />
+            </button>
+            <button aria-label="User menu" className="ml-1 flex size-8 items-center justify-center rounded-full bg-[#26483b] text-[10px] font-semibold text-emerald-100">{user ? initials(user.full_name, user.email) : "AH"}</button>
+          </div>
+        </header>
+
+        <main className={cn("min-h-0 flex-1 pb-12 md:pb-0", isWorkspace ? "overflow-hidden" : "overflow-y-auto px-5 py-7 sm:px-8 sm:py-9")}>{children}</main>
       </div>
+
+      <nav className="fixed inset-x-0 bottom-0 z-[70] flex h-12 items-center justify-around border-t border-white/[0.09] bg-[#09140f]/95 px-3 backdrop-blur md:hidden" aria-label="Mobile navigation">
+        {[{label:"Workspace",icon:Blocks},{label:"Documents",icon:FileStack},{label:"History",icon:Clock3},{label:"Runs",icon:Network}].map(({label,icon:Icon}, index) => <button key={label} className={cn("flex min-w-14 flex-col items-center gap-0.5 text-[8px]", index === 0 ? "text-emerald-300" : "text-[#64736d]")}><Icon className="size-3.5" />{label}</button>)}
+      </nav>
+
+      {mobileOpen ? <div className="fixed inset-0 z-[90] md:hidden">
+        <button aria-label="Close menu" className="absolute inset-0 bg-black/60" onClick={() => setMobileOpen(false)} />
+        <aside className="relative h-full w-64 border-r border-white/10 bg-[#09140f] p-4">
+          <div className="mb-7 flex items-center justify-between"><span className="flex items-center gap-2 text-sm font-semibold"><span className="flex size-8 items-center justify-center rounded-lg bg-emerald-400 text-[#052116]"><Sparkles className="size-4" /></span>RAGForge</span><button onClick={() => setMobileOpen(false)}><X className="size-4" /></button></div>
+          <nav className="space-y-1">{nav.map((item) => <button key={item.label} onClick={() => { if (item.href) router.push(item.href); setMobileOpen(false); }} className="flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm text-[#93a39c] hover:bg-white/5 hover:text-white"><item.icon className="size-4" />{item.label}</button>)}</nav>
+          <button onClick={logout} className="absolute bottom-5 left-4 flex items-center gap-2 text-sm text-[#93a39c]"><LogOut className="size-4" />Sign out</button>
+        </aside>
+      </div> : null}
+
+      {searchOpen ? <div className="fixed inset-0 z-[100] flex items-start justify-center bg-black/60 px-4 pt-[14vh] backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}>
+        <div className="w-full max-w-xl overflow-hidden rounded-xl border border-white/10 bg-[#0e1c17] shadow-2xl">
+          <div className="flex items-center gap-3 border-b border-white/10 px-4"><Search className="size-4 text-[#64736d]" /><input autoFocus className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-[#64736d]" placeholder="Search projects, documents, queries…" /><span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-[#64736d]">ESC</span></div>
+          <div className="p-5 text-center"><Search className="mx-auto size-4 text-[#53625b]" /><p className="mt-2 text-[10px] text-[#93a39c]">Start typing to search your workspace</p><p className="mt-1 text-[8px] text-[#53625b]">Results will come from your projects, documents, and query history.</p></div>
+        </div>
+      </div> : null}
     </div>
   );
 }
