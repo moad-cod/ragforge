@@ -508,6 +508,10 @@ Core settings:
 - `EVENT_STREAM_TTL_SECONDS`
 - `SSE_HEARTBEAT_SECONDS`
 - `SSE_POLL_SECONDS`
+- `AIRFLOW_API_URL`, `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`, `AIRFLOW_DAG_ID` for optional DAG submission from FastAPI
+- `PIPELINE_SERVICE_TOKEN` for Airflow-to-FastAPI internal pipeline calls
+- `RAGFORGE_BRONZE_TO_SILVER_CMD`, `RAGFORGE_SILVER_TO_GOLD_CMD`, `RAGFORGE_UPSERT_QDRANT_CMD` for generic pipeline jobs
+- `RAGFORGE_<STAGE>_<PROFILE>_CMD` for optional profile-specific worker backends, where the profile suffix is `THROUGHPUT`, `STRUCTURED`, `EMBEDDING_AWARE`, `LLM_ENRICHED`, or `MULTIMODAL`
 
 Optional provider settings:
 
@@ -541,6 +545,8 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 | `backend/tests/test_control_plane_database.py` | Tasks 21–22 isolated PostgreSQL seed, constraint, relationship, lifecycle, schema, and migration tests |
 | `backend/tests/test_realtime_streaming.py` | Task 23 SSE, replay, fallback, ownership, token, disconnect, heartbeat, and optional live Redis tests |
 | `backend/tests/test_pipeline_artifacts.py` | Task 25 deterministic Silver/Gold Parquet, retry, empty input, and embedding mismatch tests |
+| `backend/tests/test_ingestion_planner.py` | Adaptive technique classification, profiles, resource classes, batch sizes, and concurrency hints |
+| `backend/tests/test_ingestion_execution.py` | Profile-specific command selection, generic fallback, and worker environment propagation |
 | `backend/tests/e2e/test_control_plane.py` | Task 26 containerized upload-to-answer, lineage, Redis recovery, failure, and tenant-isolation tests |
 | `scripts/e2e_v2.sh` | Isolated one-command Task 26 Compose orchestrator |
 | `frontend/src/**/*.test.tsx` | Task 27 loading, empty, success, failure, SSE parsing, and reconnect tests |
@@ -554,6 +560,9 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 - FastEmbed handles both default dense embeddings and BM25 sparse vectors.
 - R2/S3 storage is used only for optional multimodal PDF page images.
 - The text ingestion endpoint rejects the `multimodal` chunker because multimodal has its own endpoint.
+- Adaptive plans are execution hints, not a scheduler by themselves. The generic commands work unchanged; profile-specific command variables can route work to optimized CPU, high-memory, network-bound, or GPU backends.
+- The planner is derived from durable chunker/source metadata and adds no control-plane table or migration.
+- Late chunking vectors cross the Silver/Gold boundary as `precomputed_dense_vector`; other chunkers are embedded in batches selected by the planner.
 - The registry is built for SaaS frontend display and does not expose callable paths publicly.
 - The default Docker image is intentionally text-RAG focused; optional multimodal and CrossEncoder rerank dependencies should be isolated.
 - The frontend uses a same-origin Next.js proxy so JWTs remain in HttpOnly
