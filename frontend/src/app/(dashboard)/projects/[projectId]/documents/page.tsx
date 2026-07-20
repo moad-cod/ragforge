@@ -1,4 +1,4 @@
-import {DocumentsWorkspace} from "@/components/documents-workspace";
+import {WorkspaceEntry} from "@/components/workspace/workspace-entry";
 
 export default async function DocumentsPage({
   params,
@@ -6,5 +6,5 @@ export default async function DocumentsPage({
   params: Promise<{projectId: string}>;
 }) {
   const {projectId} = await params;
-  return <DocumentsWorkspace projectId={projectId} />;
+  return <WorkspaceEntry projectId={projectId} />;
 }
