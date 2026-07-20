@@ -158,6 +158,25 @@ export default function ProjectsPage() {
                   </span>
                 ) : null}
               </label>
+              <label className="mt-4 block">
+                <span className="mb-2 block text-sm font-medium">Project description <span className="font-normal text-[var(--ink-faint)]">(optional)</span></span>
+                <textarea className="min-h-20 w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] px-3.5 py-2.5 text-sm outline-none placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)]" placeholder="What knowledge will this project contain?" {...register("description")} />
+              </label>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-2 flex items-center gap-1.5 text-sm font-medium"><Building2 className="size-3.5 text-[var(--ink-faint)]" />Organization</span>
+                  <select className="h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] px-3 text-sm outline-none focus:border-[var(--accent)]" {...register("organization_id")}>
+                    <option value="">Personal workspace</option>
+                    {organizations.map((organization) => <option key={organization.organization_id} value={organization.organization_id}>{organization.name}</option>)}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-2 flex items-center gap-1.5 text-sm font-medium"><Languages className="size-3.5 text-[var(--ink-faint)]" />Default language</span>
+                  <select className="h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] px-3 text-sm outline-none focus:border-[var(--accent)]" {...register("language")}>
+                    <option value="en">English</option><option value="fr">French</option><option value="ar">Arabic</option><option value="es">Spanish</option><option value="de">German</option>
+                  </select>
+                </label>
+              </div>
               <div className="mt-6 flex justify-end gap-2">
                 <Button variant="secondary" onClick={() => setCreating(false)}>
                   Cancel
@@ -168,7 +187,7 @@ export default function ProjectsPage() {
                   ) : (
                     <Plus className="size-4" />
                   )}
-                  Create project
+                  Create Project
                 </Button>
               </div>
             </form>
