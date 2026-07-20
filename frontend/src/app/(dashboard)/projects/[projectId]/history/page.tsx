@@ -1,4 +1,4 @@
-import {HistoryWorkspace} from "@/components/history-workspace";
+import {redirect} from "next/navigation";
 
 export default async function HistoryPage({
   params,
@@ -6,5 +6,5 @@ export default async function HistoryPage({
   params: Promise<{projectId: string}>;
 }) {
   const {projectId} = await params;
-  return <HistoryWorkspace projectId={projectId} />;
+  redirect(`/projects/${projectId}/documents`);
 }
