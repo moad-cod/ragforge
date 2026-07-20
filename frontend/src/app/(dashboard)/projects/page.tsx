@@ -131,13 +131,14 @@ export default function ProjectsPage() {
       )}
 
       {creating ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-sm">
-          <Card className="w-full max-w-md p-6 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+          <Card className="w-full max-w-xl p-6 shadow-2xl sm:p-7">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-xl font-semibold">Create project</h2>
-                <p className="mt-1 text-sm text-[var(--ink-muted)]">
-                  A dedicated vector collection will be created automatically.
+                <p className="text-[10px] font-semibold uppercase tracking-[.16em] text-emerald-300">New project</p>
+                <h2 className="mt-1 text-xl font-semibold">Create a new knowledge project</h2>
+                <p className="mt-2 max-w-lg text-sm leading-6 text-[var(--ink-muted)]">
+                  Create a workspace where you can upload documents, process knowledge, and ask grounded questions with traceable sources.
                 </p>
               </div>
               <Button variant="ghost" size="icon" onClick={() => setCreating(false)}>
@@ -145,7 +146,7 @@ export default function ProjectsPage() {
               </Button>
             </div>
             <form
-              className="mt-6"
+              className="mt-7"
               onSubmit={handleSubmit((values) => createProject.mutate(values))}
             >
               <label className="block">
