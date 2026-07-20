@@ -1,4 +1,4 @@
-import {ChatWorkspace} from "@/components/chat-workspace";
+import {redirect} from "next/navigation";
 
 export default async function ChatPage({
   params,
@@ -6,5 +6,5 @@ export default async function ChatPage({
   params: Promise<{projectId: string}>;
 }) {
   const {projectId} = await params;
-  return <ChatWorkspace projectId={projectId} />;
+  redirect(`/projects/${projectId}/documents`);
 }
