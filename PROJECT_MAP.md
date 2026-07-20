@@ -12,6 +12,8 @@ Next.js control-plane UI / Swagger UI
   -> FastAPI routers
   -> Auth / Organizations / Projects / Documents / Chunkers / Ingest / Query
   -> SQLAlchemy async + PostgreSQL control-plane metadata
+  -> Durable file landing + adaptive ingestion planner
+  -> Airflow profile-aware Bronze -> Silver -> Gold orchestration
   -> Parser + chunker registry + embedding services
   -> FastEmbed dense BGE vectors + FastEmbed BM25 sparse vectors
   -> Qdrant dense+sparse vector collections
@@ -35,6 +37,9 @@ Next.js control-plane UI / Swagger UI
 | Projects | `backend/app/api/projects.py` | Project CRUD, ownership checks, Qdrant collection lifecycle |
 | Documents | `backend/app/api/documents.py` | Document list/get/delete and document version listing |
 | Ingestion | `backend/app/api/ingest.py` | File, URL, Google Drive, and optional multimodal ingestion |
+| Pipeline control | `backend/app/api/internal_pipeline.py`, `backend/app/services/ingestion_planner.py` | Authenticated run metadata/status boundary and deterministic technique-to-execution planning |
+| Batch artifacts | `backend/app/services/pipeline_artifacts.py`, `backend/jobs/*.py` | Bronze parsing/chunking, Silver/Gold Parquet, adaptive embedding batches, and Qdrant indexing |
+| Airflow execution | `backend/airflow/dags/ragforge_ingestion.py`, `backend/jobs/ingestion_execution.py` | Detects the selected chunking technique, chooses profile-aware commands, and exports resource hints |
 | Query | `backend/app/api/query.py` | Text RAG query and optional multimodal page query |
 | Chunker catalog | `backend/app/api/chunkers.py`, `backend/app/services/chunkers/registry.py` | Public chunker metadata, validation, and lazy callable lookup |
 | Parsing | `backend/app/services/parser.py` | PDF, DOCX, XLSX, PPTX, CSV, HTML, text, URL, and Google Drive parsing |
@@ -56,6 +61,7 @@ backend/
       chunkers.py
       documents.py
       ingest.py
+      internal_pipeline.py
       organizations.py
       projects.py
       query.py
@@ -100,8 +106,11 @@ backend/
       query_cache.py
       query_observability.py
       pipeline_status.py
+      pipeline_artifacts.py
+      ingestion_planner.py
   jobs/
     bronze_to_silver.py
+    ingestion_execution.py
     silver_to_gold.py
     upsert_qdrant.py
   alembic/
