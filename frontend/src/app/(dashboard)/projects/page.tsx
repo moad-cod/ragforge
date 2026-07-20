@@ -2,7 +2,7 @@
 
 import {zodResolver} from "@hookform/resolvers/zod";
 import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
-import {ArrowRight, FolderKanban, LoaderCircle, Plus, X} from "lucide-react";
+import {ArrowRight, Building2, FolderKanban, Languages, LoaderCircle, Plus, X} from "lucide-react";
 import Link from "next/link";
 import {useState} from "react";
 import {useForm} from "react-hook-form";
@@ -14,11 +14,14 @@ import {Card} from "@/components/ui/card";
 import {EmptyState} from "@/components/ui/empty-state";
 import {Input} from "@/components/ui/input";
 import {apiFetch} from "@/lib/api";
-import type {Project} from "@/lib/types";
+import type {Organization, Project} from "@/lib/types";
 import {relativeTime} from "@/lib/utils";
 
 const schema = z.object({
   name: z.string().trim().min(2, "Project name is required").max(120),
+  description: z.string().trim().max(500).optional(),
+  organization_id: z.string().optional(),
+  language: z.string().min(2),
 });
 type Values = z.infer<typeof schema>;
 
@@ -29,23 +32,33 @@ export default function ProjectsPage() {
     queryKey: ["projects"],
     queryFn: () => apiFetch<Project[]>("/projects/"),
   });
+  const {data: organizations = []} = useQuery({
+    queryKey: ["organizations"],
+    queryFn: () => apiFetch<Organization[]>("/organizations/"),
+    enabled: creating,
+  });
   const {
     register,
     handleSubmit,
     reset,
     formState: {errors},
-  } = useForm<Values>({resolver: zodResolver(schema)});
+  } = useForm<Values>({
+    resolver: zodResolver(schema),
+    defaultValues: {name: "", description: "", organization_id: "", language: "en"},
+  });
   const createProject = useMutation({
     mutationFn: (values: Values) =>
       apiFetch<Project>("/projects/", {
         method: "POST",
-        body: JSON.stringify(values),
+        body: JSON.stringify({name: values.name, organization_id: values.organization_id || null}),
       }),
-    onSuccess: async () => {
+    onSuccess: async (project, values) => {
       await queryClient.invalidateQueries({queryKey: ["projects"]});
+      localStorage.setItem(`ragforge:project:${project.project_id}:onboarding`, JSON.stringify({description: values.description ?? "", language: values.language}));
       reset();
       setCreating(false);
       toast.success("Project created");
+      window.location.assign(`/projects/${project.project_id}/onboarding`);
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Unable to create project"),
