@@ -6,13 +6,13 @@ export default function AuthLayout({children}: {children: React.ReactNode}) {
       <section className="subtle-grid hidden overflow-hidden bg-[var(--surface-dark)] p-12 text-white lg:flex lg:flex-col">
         <Brand inverse />
         <div className="my-auto max-w-xl">
-          <div className="mb-6 inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-indigo-200">
+          <div className="mb-6 inline-flex rounded-full border border-emerald-400/20 bg-emerald-400/[0.06] px-3 py-1 text-xs font-medium text-emerald-200">
             Durable RAG operations, made visible
           </div>
-          <h1 className="text-5xl font-semibold leading-[1.08] tracking-tight">
+          <h1 className="text-4xl font-semibold leading-[1.1] tracking-tight">
             Turn documents into an observable knowledge system.
           </h1>
-          <p className="mt-6 max-w-lg text-lg leading-8 text-slate-300">
+          <p className="mt-6 max-w-lg text-base leading-7 text-[#a9b7b0]">
             Upload, track, query, and inspect every stage of your retrieval
             pipeline from one focused workspace.
           </p>
@@ -27,13 +27,13 @@ export default function AuthLayout({children}: {children: React.ReactNode}) {
                 className="rounded-2xl border border-white/10 bg-white/[0.04] p-4"
               >
                 <div className="font-semibold">{title}</div>
-                <div className="mt-1 text-xs text-slate-400">{description}</div>
+                <div className="mt-1 text-xs text-[#71847b]">{description}</div>
               </div>
             ))}
           </div>
         </div>
-        <p className="text-xs text-slate-500">
-          RAGForge · Task 27 frontend control plane
+        <p className="text-xs text-[#53625b]">
+          RAGForge · Authenticated retrieval control plane
         </p>
       </section>
       <section className="flex min-h-screen items-center justify-center px-6 py-12">
