@@ -1,199 +1,57 @@
 "use client";
 
-import {zodResolver} from "@hookform/resolvers/zod";
-import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
-import {ArrowRight, Building2, FolderKanban, Languages, LoaderCircle, Plus, X} from "lucide-react";
-import Link from "next/link";
-import {useState} from "react";
-import {useForm} from "react-hook-form";
+import {useMutation, useQueries, useQuery, useQueryClient} from "@tanstack/react-query";
+import {FolderKanban, Grid2X2, List, Plus, Search} from "lucide-react";
+import {useRouter} from "next/navigation";
+import {useMemo, useState} from "react";
 import {toast} from "sonner";
-import {z} from "zod";
+import {ConfirmDeleteDialog} from "@/components/confirm-delete-dialog";
 import {PageHeader} from "@/components/page-header";
+import {ProjectCard} from "@/components/project-card";
+import {ProjectForm, type ProjectFormValues} from "@/components/project-form";
 import {Button} from "@/components/ui/button";
-import {Card} from "@/components/ui/card";
+import {Dialog} from "@/components/ui/dialog";
 import {EmptyState} from "@/components/ui/empty-state";
+import {ErrorState} from "@/components/ui/error-state";
 import {Input} from "@/components/ui/input";
+import {LoadingState} from "@/components/ui/loading-state";
 import {apiFetch} from "@/lib/api";
-import type {Organization, Project} from "@/lib/types";
-import {relativeTime} from "@/lib/utils";
-
-const schema = z.object({
-  name: z.string().trim().min(2, "Project name is required").max(120),
-  description: z.string().trim().max(500).optional(),
-  organization_id: z.string().optional(),
-  language: z.string().min(2),
-});
-type Values = z.infer<typeof schema>;
+import type {Chunker, Document, IngestionRun, Organization, Project} from "@/lib/types";
+import {cn} from "@/lib/utils";
 
 export default function ProjectsPage() {
+  const router = useRouter();
   const queryClient = useQueryClient();
-  const [creating, setCreating] = useState(false);
-  const {data: projects = [], isLoading} = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => apiFetch<Project[]>("/projects/"),
-  });
-  const {data: organizations = []} = useQuery({
-    queryKey: ["organizations"],
-    queryFn: () => apiFetch<Organization[]>("/organizations/"),
-    enabled: creating,
-  });
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: {errors},
-  } = useForm<Values>({
-    resolver: zodResolver(schema),
-    defaultValues: {name: "", description: "", organization_id: "", language: "en"},
-  });
-  const createProject = useMutation({
-    mutationFn: (values: Values) =>
-      apiFetch<Project>("/projects/", {
-        method: "POST",
-        body: JSON.stringify({name: values.name, organization_id: values.organization_id || null}),
-      }),
-    onSuccess: async (project, values) => {
-      await queryClient.invalidateQueries({queryKey: ["projects"]});
-      localStorage.setItem(`ragforge:project:${project.project_id}:onboarding`, JSON.stringify({description: values.description ?? "", language: values.language}));
-      reset();
-      setCreating(false);
-      toast.success("Project created");
-      window.location.assign(`/projects/${project.project_id}/onboarding`);
-    },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Unable to create project"),
-  });
+  const [dialog, setDialog] = useState<"create" | "rename" | null>(null);
+  const [selected, setSelected] = useState<Project | null>(null);
+  const [deleting, setDeleting] = useState<Project | null>(null);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("updated");
+  const [view, setView] = useState<"grid" | "list">("grid");
+  const projectsQuery = useQuery({queryKey: ["projects"], queryFn: () => apiFetch<Project[]>("/projects/")});
+  const organizationsQuery = useQuery({queryKey: ["organizations"], queryFn: () => apiFetch<Organization[]>("/organizations/"), enabled: dialog === "create"});
+  const chunkersQuery = useQuery({queryKey: ["chunkers"], queryFn: () => apiFetch<Chunker[]>("/chunkers"), enabled: dialog === "create"});
+  const projects = useMemo(() => projectsQuery.data ?? [], [projectsQuery.data]);
+  const documentQueries = useQueries({queries: projects.map((project) => ({queryKey: ["documents", project.project_id], queryFn: () => apiFetch<Document[]>(`/documents/?project_id=${project.project_id}`), staleTime: 30_000}))});
+  const runQueries = useQueries({queries: projects.map((project) => ({queryKey: ["ingestion-runs", project.project_id], queryFn: () => apiFetch<IngestionRun[]>(`/ingest/runs?project_id=${project.project_id}&limit=30`), staleTime: 15_000}))});
+  const stats = new Map(projects.map((project, index) => [project.project_id, {documents: documentQueries[index]?.data?.length ?? null, active: runQueries[index]?.data?.filter((run) => !["indexed", "failed", "cancelled"].includes(run.status)).length ?? null}]));
+  const filtered = useMemo(() => projects.filter((project) => project.name.toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => sort === "name" ? a.name.localeCompare(b.name) : new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()), [projects, search, sort]);
 
-  return (
-    <div className="space-y-8">
-      <PageHeader
-        eyebrow="Workspace"
-        title="Projects"
-        description="Each project is an isolated knowledge base with its own documents, vector collection, and query history."
-        actions={
-          <Button onClick={() => setCreating(true)}>
-            <Plus className="size-4" />
-            New project
-          </Button>
-        }
-      />
+  const create = useMutation({mutationFn: (values: ProjectFormValues) => apiFetch<Project>("/projects/", {method: "POST", body: JSON.stringify({name: values.name, organization_id: values.organization_id || null})}), onSuccess: async (project, values) => {localStorage.setItem(`ragforge:project:${project.project_id}:chunker`, values.chunker); await queryClient.invalidateQueries({queryKey: ["projects"]}); toast.success("Project created"); router.push(`/projects/${project.project_id}/onboarding`);}, onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to create project")});
+  const rename = useMutation({mutationFn: (values: ProjectFormValues) => apiFetch<Project>(`/projects/${selected?.project_id}`, {method: "PATCH", body: JSON.stringify({name: values.name})}), onSuccess: async () => {await queryClient.invalidateQueries({queryKey: ["projects"]}); setDialog(null); setSelected(null); toast.success("Project renamed");}, onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to rename project")});
+  const remove = useMutation({mutationFn: (projectId: string) => apiFetch(`/projects/${projectId}`, {method: "DELETE"}), onSuccess: async () => {await queryClient.invalidateQueries({queryKey: ["projects"]}); setDeleting(null); toast.success("Project deleted");}, onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to delete project")});
 
-      {isLoading ? (
-        <div
-          className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
-          aria-label="Loading projects"
-        >
-          {[1, 2, 3].map((item) => (
-            <div
-              key={item}
-              className="h-48 animate-pulse rounded-2xl border border-[var(--border)] bg-white"
-            />
-          ))}
-        </div>
-      ) : projects.length ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {projects.map((project) => (
-            <Card
-              key={project.project_id}
-              className="group p-5 transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-lg hover:shadow-indigo-950/5"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex size-11 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]">
-                  <FolderKanban className="size-5" />
-                </div>
-                <span className="text-xs text-[var(--ink-faint)]">
-                  {relativeTime(project.updated_at)}
-                </span>
-              </div>
-              <h2 className="mt-5 truncate text-lg font-semibold">{project.name}</h2>
-              <p className="mt-2 line-clamp-2 text-sm leading-6 text-[var(--ink-muted)]">
-                Upload documents, observe ingestion, and ask grounded questions
-                inside this isolated project.
-              </p>
-              <Link
-                href={`/projects/${project.project_id}/documents`}
-                className="mt-5 flex items-center justify-between border-t border-[var(--border)] pt-4 text-sm font-semibold text-[var(--accent)]"
-              >
-                Open workspace
-                <ArrowRight className="size-4 transition group-hover:translate-x-1" />
-              </Link>
-            </Card>
-          ))}
-        </div>
-      ) : (
-        <EmptyState
-          icon={FolderKanban}
-          title="No projects yet"
-          description="Create your first project to start building a searchable, observable knowledge base."
-          action="Create project"
-          onAction={() => setCreating(true)}
-        />
-      )}
-
-      {creating ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
-          <Card className="w-full max-w-xl p-6 shadow-2xl sm:p-7">
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[.16em] text-emerald-300">New project</p>
-                <h2 className="mt-1 text-xl font-semibold">Create a new knowledge project</h2>
-                <p className="mt-2 max-w-lg text-sm leading-6 text-[var(--ink-muted)]">
-                  Create a workspace where you can upload documents, process knowledge, and ask grounded questions with traceable sources.
-                </p>
-              </div>
-              <Button variant="ghost" size="icon" onClick={() => setCreating(false)}>
-                <X className="size-4" />
-              </Button>
-            </div>
-            <form
-              className="mt-7"
-              onSubmit={handleSubmit((values) => createProject.mutate(values))}
-            >
-              <label className="block">
-                <span className="mb-2 block text-sm font-medium">Project name</span>
-                <Input autoFocus placeholder="Product knowledge base" {...register("name")} />
-                {errors.name ? (
-                  <span className="mt-1.5 block text-xs text-[var(--danger)]">
-                    {errors.name.message}
-                  </span>
-                ) : null}
-              </label>
-              <label className="mt-4 block">
-                <span className="mb-2 block text-sm font-medium">Project description <span className="font-normal text-[var(--ink-faint)]">(optional)</span></span>
-                <textarea className="min-h-20 w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] px-3.5 py-2.5 text-sm outline-none placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)]" placeholder="What knowledge will this project contain?" {...register("description")} />
-              </label>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <label className="block">
-                  <span className="mb-2 flex items-center gap-1.5 text-sm font-medium"><Building2 className="size-3.5 text-[var(--ink-faint)]" />Organization</span>
-                  <select className="h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] px-3 text-sm outline-none focus:border-[var(--accent)]" {...register("organization_id")}>
-                    <option value="">Personal workspace</option>
-                    {organizations.map((organization) => <option key={organization.organization_id} value={organization.organization_id}>{organization.name}</option>)}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="mb-2 flex items-center gap-1.5 text-sm font-medium"><Languages className="size-3.5 text-[var(--ink-faint)]" />Default language</span>
-                  <select className="h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] px-3 text-sm outline-none focus:border-[var(--accent)]" {...register("language")}>
-                    <option value="en">English</option><option value="fr">French</option><option value="ar">Arabic</option><option value="es">Spanish</option><option value="de">German</option>
-                  </select>
-                </label>
-              </div>
-              <div className="mt-6 flex justify-end gap-2">
-                <Button variant="secondary" onClick={() => setCreating(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={createProject.isPending}>
-                  {createProject.isPending ? (
-                    <LoaderCircle className="size-4 animate-spin" />
-                  ) : (
-                    <Plus className="size-4" />
-                  )}
-                  Create Project
-                </Button>
-              </div>
-            </form>
-          </Card>
-        </div>
-      ) : null}
+  return <div className="mx-auto max-w-7xl space-y-6">
+    <PageHeader eyebrow="Control plane" title="Projects" description="Open a knowledge workspace, monitor document ingestion, and inspect grounded query activity." actions={<Button onClick={() => setDialog("create")}><Plus className="size-4" />New project</Button>} />
+    <div className="flex flex-col gap-3 rounded-xl border border-white/[0.08] bg-[#0a1511] p-3 sm:flex-row sm:items-center">
+      <label className="relative min-w-0 flex-1"><span className="sr-only">Search projects</span><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#64736d]" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search projects" /></label>
+      <select value={sort} onChange={(event) => setSort(event.target.value)} className="h-10 rounded-lg border border-white/[0.08] bg-[var(--surface-muted)] px-3 text-xs outline-none" aria-label="Sort projects"><option value="updated">Recently updated</option><option value="name">Name</option></select>
+      <div className="flex rounded-lg border border-white/[0.08] p-1"><button className={cn("flex size-8 items-center justify-center rounded-md", view === "grid" ? "bg-emerald-400/10 text-emerald-300" : "text-[#64736d]")} onClick={() => setView("grid")} aria-label="Grid view"><Grid2X2 className="size-4" /></button><button className={cn("flex size-8 items-center justify-center rounded-md", view === "list" ? "bg-emerald-400/10 text-emerald-300" : "text-[#64736d]")} onClick={() => setView("list")} aria-label="List view"><List className="size-4" /></button></div>
     </div>
-  );
+    {projectsQuery.isLoading ? <LoadingState label="Loading projects" rows={3} className={view === "grid" ? "grid gap-4 md:grid-cols-2 xl:grid-cols-3 [&>*]:h-64" : undefined} /> : projectsQuery.isError ? <ErrorState title="Projects could not be loaded" description="The authenticated project API did not return a usable response." onRetry={() => void projectsQuery.refetch()} /> : filtered.length ? <div className={view === "grid" ? "grid gap-4 md:grid-cols-2 xl:grid-cols-3" : "space-y-3"}>{filtered.map((project) => <ProjectCard key={project.project_id} project={project} documentCount={stats.get(project.project_id)?.documents ?? null} activeRuns={stats.get(project.project_id)?.active ?? null} view={view} onRename={() => {setSelected(project); setDialog("rename");}} onDelete={() => setDeleting(project)} />)}</div> : <EmptyState icon={FolderKanban} title={search ? "No matching projects" : "No projects yet"} description={search ? "Try a different project name." : "Create your first project to start building a searchable knowledge base."} action={search ? undefined : "Create project"} onAction={search ? undefined : () => setDialog("create")} />}
+
+    <Dialog open={dialog === "create"} onClose={() => setDialog(null)} title="Create project" description="Create an isolated workspace and choose the initial upload preference."><ProjectForm organizations={organizationsQuery.data ?? []} chunkers={chunkersQuery.data ?? []} isPending={create.isPending} onCancel={() => setDialog(null)} onSubmit={(values) => create.mutate(values)} /></Dialog>
+    <Dialog open={dialog === "rename" && Boolean(selected)} onClose={() => {setDialog(null); setSelected(null);}} title="Rename project" description="The Qdrant collection and indexed data remain unchanged.">{selected ? <ProjectForm initialName={selected.name} submitLabel="Save name" isPending={rename.isPending} onCancel={() => {setDialog(null); setSelected(null);}} onSubmit={(values) => rename.mutate(values)} /> : null}</Dialog>
+    {deleting ? <ConfirmDeleteDialog open name={deleting.name} title={`Delete ${deleting.name}?`} consequences={`${stats.get(deleting.project_id)?.documents ?? "All"} project documents, the vector collection, and associated query history will no longer be available.`} isPending={remove.isPending} onClose={() => setDeleting(null)} onConfirm={() => remove.mutate(deleting.project_id)} /> : null}
+  </div>;
 }
