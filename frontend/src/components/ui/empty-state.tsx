@@ -15,7 +15,7 @@ export function EmptyState({
   onAction?: () => void;
 }) {
   return (
-    <div className="flex min-h-72 flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--border-strong)] bg-white px-6 text-center">
+    <div className="flex min-h-72 flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border-strong)] bg-white/[0.015] px-6 text-center">
       <div className="mb-4 flex size-12 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent)]">
         <Icon className="size-6" />
       </div>
