@@ -53,7 +53,7 @@ export default function RegisterPage() {
   return (
     <>
       <p className="text-sm font-semibold text-[var(--accent)]">Get started</p>
-      <h1 className="mt-2 text-3xl font-semibold tracking-tight">
+      <h1 className="mt-2 text-2xl font-semibold tracking-tight">
         Create your RAGForge workspace
       </h1>
       <p className="mt-3 text-sm leading-6 text-[var(--ink-muted)]">

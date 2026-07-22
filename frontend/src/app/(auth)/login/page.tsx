@@ -38,7 +38,7 @@ export default function LoginPage() {
   return (
     <>
       <p className="text-sm font-semibold text-[var(--accent)]">Welcome back</p>
-      <h1 className="mt-2 text-3xl font-semibold tracking-tight">
+      <h1 className="mt-2 text-2xl font-semibold tracking-tight">
         Sign in to your workspace
       </h1>
       <p className="mt-3 text-sm leading-6 text-[var(--ink-muted)]">
@@ -51,6 +51,7 @@ export default function LoginPage() {
           <Input
             autoComplete="email"
             placeholder="you@example.com"
+            aria-invalid={Boolean(errors.email)}
             {...register("email")}
           />
           {errors.email ? (
@@ -65,6 +66,7 @@ export default function LoginPage() {
             type="password"
             autoComplete="current-password"
             placeholder="Your password"
+            aria-invalid={Boolean(errors.password)}
             {...register("password")}
           />
           {errors.password ? (
