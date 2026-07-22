@@ -1,91 +1,132 @@
 "use client";
 
-import {useQuery} from "@tanstack/react-query";
+import {useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 import {
   BarChart3,
   Bell,
-  Blocks,
+  Building2,
   ChevronDown,
-  CircleHelp,
+  ChevronRight,
   Clock3,
   Command,
   FileStack,
   FolderKanban,
+  Home,
   LogOut,
   Menu,
-  Moon,
-  Network,
+  PanelLeftClose,
+  PanelLeftOpen,
   Search,
   Settings,
   Sparkles,
+  UserRound,
+  Workflow,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import {usePathname, useRouter} from "next/navigation";
-import {useEffect, useMemo, useState} from "react";
+import {useEffect, useMemo, useRef, useState} from "react";
+import {toast} from "sonner";
 import {apiFetch, authFetch} from "@/lib/api";
-import type {Project, User} from "@/lib/types";
+import type {Organization, Project, User} from "@/lib/types";
 import {cn, initials} from "@/lib/utils";
+
+type NavItem = {label: string; href: string; icon: typeof Home};
 
 function projectIdFromPath(pathname: string) {
   return pathname.match(/^\/projects\/([^/]+)/)?.[1] ?? null;
 }
 
-const nav = [
-  {label: "Workspace", icon: Blocks},
-  {label: "Projects", icon: FolderKanban, href: "/projects"},
-  {label: "Query history", icon: Clock3},
-  {label: "Pipeline runs", icon: Network},
-  {label: "Analytics", icon: BarChart3},
-  {label: "Settings", icon: Settings},
-];
+function navigation(projectId: string | null): NavItem[] {
+  return [
+    {label: "Home", href: "/home", icon: Home},
+    {label: "Projects", href: "/projects", icon: FolderKanban},
+    {label: "Documents", href: projectId ? `/projects/${projectId}/documents` : "/documents", icon: FileStack},
+    {label: "Ingestion runs", href: projectId ? `/projects/${projectId}/runs` : "/runs", icon: Workflow},
+    {label: "Query history", href: projectId ? `/projects/${projectId}/history` : "/history", icon: Clock3},
+    {label: "Observability", href: projectId ? `/projects/${projectId}/observability` : "/observability", icon: BarChart3},
+    {label: "Organization", href: "/organization", icon: Building2},
+    {label: "Settings", href: "/settings/profile", icon: Settings},
+  ];
+}
 
-function RailButton({label, active, icon: Icon, onClick}: {
-  label: string;
-  active?: boolean;
-  icon: typeof Blocks;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      className={cn(
-        "group relative flex size-10 items-center justify-center rounded-[10px] text-[#71847b] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400",
-        active ? "bg-emerald-400/12 text-[#2bdf95]" : "hover:bg-white/[0.05] hover:text-[#c4d1cb]",
-      )}
-    >
-      <Icon className="size-[18px]" strokeWidth={1.8} />
-      <span className="pointer-events-none absolute left-[calc(100%+10px)] z-[80] hidden whitespace-nowrap rounded-md border border-white/10 bg-[#13251e] px-2 py-1.5 text-[11px] font-medium text-white shadow-xl group-hover:block">
-        {label}
-      </span>
-    </button>
-  );
+function routeLabel(segment: string, project?: Project) {
+  if (segment === project?.project_id) return project.name;
+  const labels: Record<string, string> = {
+    projects: "Projects",
+    documents: "Workspace",
+    runs: "Ingestion runs",
+    history: "Query history",
+    observability: "Observability",
+    organization: "Organization",
+    settings: "Settings",
+    profile: "Profile",
+  };
+  return labels[segment] ?? segment.replaceAll("-", " ");
 }
 
 export function AppShell({children}: {children: React.ReactNode}) {
   const pathname = usePathname();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const projectId = projectIdFromPath(pathname);
+  const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
   const {data: user} = useQuery({queryKey: ["me"], queryFn: () => apiFetch<User>("/auth/me")});
   const {data: projects = []} = useQuery({queryKey: ["projects"], queryFn: () => apiFetch<Project[]>("/projects/")});
-  const project = useMemo(() => projects.find((item) => item.project_id === projectId), [projectId, projects]);
-  const isWorkspace = Boolean(projectId);
+  const {data: organizations = []} = useQuery({queryKey: ["organizations"], queryFn: () => apiFetch<Organization[]>("/organizations/")});
+  const project = projects.find((item) => item.project_id === projectId);
+  const nav = navigation(projectId);
+  const breadcrumbs = pathname.split("/").filter(Boolean).map((segment) => routeLabel(segment, project));
+  const searchResults = useMemo(() => {
+    const value = search.trim().toLowerCase();
+    if (!value) return projects.slice(0, 5);
+    return projects.filter((item) => item.name.toLowerCase().includes(value)).slice(0, 8);
+  }, [projects, search]);
+
+  const switchOrganization = useMutation({
+    mutationFn: (organizationId: string) => apiFetch<User>("/auth/me", {method: "PATCH", body: JSON.stringify({organization_id: organizationId})}),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({queryKey: ["me"]});
+      toast.success("Organization context updated");
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to switch organization"),
+  });
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setSearchOpen(true);
+        setPaletteOpen(true);
       }
-      if (event.key === "Escape") setSearchOpen(false);
+      if (event.key === "Escape") {
+        setPaletteOpen(false);
+        setNotificationsOpen(false);
+        setUserMenuOpen(false);
+        setMobileOpen(false);
+      }
     };
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
   }, []);
+
+  useEffect(() => {
+    if (!paletteOpen) return;
+    const timer = window.setTimeout(() => searchRef.current?.focus(), 20);
+    return () => window.clearTimeout(timer);
+  }, [paletteOpen]);
+
+  function toggleCollapsed() {
+    setCollapsed((value) => {
+      localStorage.setItem("ragforge:sidebar-collapsed", String(!value));
+      return !value;
+    });
+  }
 
   async function logout() {
     await authFetch("/logout");
@@ -93,76 +134,120 @@ export function AppShell({children}: {children: React.ReactNode}) {
     router.refresh();
   }
 
-  return (
-    <div className="h-dvh overflow-hidden bg-[#07110d] text-[#f1f5f3]">
-      <aside className="fixed inset-y-0 left-0 z-50 hidden w-[60px] flex-col items-center border-r border-white/[0.08] bg-[#08130f] py-3 md:flex">
-        <Link href="/projects" title="RAGForge" className="group mb-4 flex size-10 items-center justify-center rounded-xl bg-emerald-400 text-[#052116] shadow-[inset_0_0_0_1px_rgba(255,255,255,.18)]">
-          <Sparkles className="size-[19px]" strokeWidth={2.2} />
+  function active(item: NavItem) {
+    if (item.label === "Projects") return pathname === "/projects";
+    return pathname === item.href || pathname.startsWith(`${item.href}/`);
+  }
+
+  const sidebar = (mobile = false) => (
+    <div className="flex h-full flex-col">
+      <div className="flex h-16 items-center gap-3 border-b border-white/[0.08] px-3">
+        <Link href="/projects" className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] text-[#041d13]" aria-label="RAGForge home">
+          <Sparkles className="size-5" />
         </Link>
-        <div className="flex flex-col gap-1.5">
-          {nav.map((item, index) => item.href ? (
-            <Link key={item.label} href={item.href} aria-label={item.label} title={item.label} className="group relative">
-              <span className={cn("flex size-10 items-center justify-center rounded-[10px] text-[#71847b] transition hover:bg-white/[0.05] hover:text-[#c4d1cb]", !projectId && index === 1 && "bg-emerald-400/12 text-[#2bdf95]") }>
-                <item.icon className="size-[18px]" strokeWidth={1.8} />
-              </span>
-            </Link>
-          ) : <RailButton key={item.label} {...item} active={Boolean(projectId) && index === 0} />)}
-        </div>
-        <div className="mt-auto flex flex-col items-center gap-1.5">
-          <RailButton label="Help center" icon={CircleHelp} />
-          <RailButton label="Dark theme" icon={Moon} />
-          <button aria-label="Sign out" title="Sign out" onClick={logout} className="relative mt-2 flex size-9 items-center justify-center rounded-full bg-[#26483b] text-[11px] font-semibold text-emerald-100 ring-2 ring-[#07110d] transition hover:ring-emerald-400/40">
-            {user ? initials(user.full_name, user.email) : "AH"}
-            <span className="absolute bottom-0 right-0 size-2.5 rounded-full border-2 border-[#08130f] bg-emerald-400" />
-          </button>
-        </div>
-      </aside>
-
-      <div className="flex h-full flex-col md:pl-[60px]">
-        <header className="z-40 flex h-[54px] shrink-0 items-center justify-between border-b border-white/[0.08] bg-[#09140f] px-3 md:px-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <button onClick={() => setMobileOpen(true)} className="flex size-8 items-center justify-center rounded-lg text-[#93a39c] hover:bg-white/5 md:hidden" aria-label="Open navigation"><Menu className="size-5" /></button>
-            <div className="hidden items-center gap-2 text-[12px] sm:flex">
-              <span className="text-[#64736d]">Organization</span><span className="text-[#40524a]">/</span>
-              <span className="max-w-40 truncate text-[#a9b7b0]">{project?.name ?? (isWorkspace ? "Research workspace" : "Projects")}</span>
-              {isWorkspace ? <><span className="text-[#40524a]">/</span><span className="text-[#f1f5f3]">Workspace</span></> : null}
-            </div>
-            {isWorkspace ? <span className="ml-1 hidden items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/[0.07] px-2 py-1 text-[10px] font-medium text-emerald-300 lg:flex"><span className="size-1.5 rounded-full bg-emerald-400" />Ready</span> : null}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button onClick={() => setSearchOpen(true)} className="hidden h-8 w-48 items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-2.5 text-left text-[11px] text-[#64736d] hover:border-white/[0.14] lg:flex">
-              <Search className="size-3.5" /><span className="flex-1">Search workspace</span><span className="flex items-center gap-0.5 rounded border border-white/10 px-1 py-0.5 text-[9px]"><Command className="size-2.5" />K</span>
-            </button>
-            <button aria-label="Notifications" className="relative flex size-8 items-center justify-center rounded-lg text-[#7f9188] hover:bg-white/5 hover:text-white"><Bell className="size-4" /><span className="absolute right-2 top-1.5 size-1.5 rounded-full bg-emerald-400" /></button>
-            <button className="hidden h-8 items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-2.5 text-[11px] text-[#cbd5d0] sm:flex">
-              <span className="flex size-4 items-center justify-center rounded bg-[#4285f4] text-[9px] font-bold text-white">G</span>Gemini 2.5 Flash<ChevronDown className="size-3 text-[#64736d]" />
-            </button>
-            <button aria-label="User menu" className="ml-1 flex size-8 items-center justify-center rounded-full bg-[#26483b] text-[10px] font-semibold text-emerald-100">{user ? initials(user.full_name, user.email) : "AH"}</button>
-          </div>
-        </header>
-
-        <main className={cn("min-h-0 flex-1 pb-12 md:pb-0", isWorkspace ? "overflow-hidden" : "overflow-y-auto px-5 py-7 sm:px-8 sm:py-9")}>{children}</main>
+        {(!collapsed || mobile) ? <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">RAGForge</span> : null}
+        {mobile ? <button className="icon-button" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X className="size-4" /></button> : null}
       </div>
-
-      <nav className="fixed inset-x-0 bottom-0 z-[70] flex h-12 items-center justify-around border-t border-white/[0.09] bg-[#09140f]/95 px-3 backdrop-blur md:hidden" aria-label="Mobile navigation">
-        {[{label:"Workspace",icon:Blocks},{label:"Documents",icon:FileStack},{label:"History",icon:Clock3},{label:"Runs",icon:Network}].map(({label,icon:Icon}, index) => <button key={label} className={cn("flex min-w-14 flex-col items-center gap-0.5 text-[8px]", index === 0 ? "text-emerald-300" : "text-[#64736d]")}><Icon className="size-3.5" />{label}</button>)}
+      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-3" aria-label="Primary navigation">
+        {nav.map((item) => {
+          const Icon = item.icon;
+          const selected = active(item);
+          return <Link
+            key={item.label}
+            href={item.href}
+            title={collapsed && !mobile ? item.label : undefined}
+            aria-current={selected ? "page" : undefined}
+            onClick={() => setMobileOpen(false)}
+            className={cn(
+              "group flex h-10 items-center gap-3 rounded-[10px] px-3 text-[12px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
+              selected ? "bg-emerald-400/10 text-emerald-200" : "text-[#83948c] hover:bg-white/[0.045] hover:text-white",
+              collapsed && !mobile && "justify-center px-0",
+            )}
+          >
+            <Icon className="size-[17px] shrink-0" strokeWidth={1.8} />
+            {(!collapsed || mobile) ? <span>{item.label}</span> : <span className="sr-only">{item.label}</span>}
+          </Link>;
+        })}
       </nav>
-
-      {mobileOpen ? <div className="fixed inset-0 z-[90] md:hidden">
-        <button aria-label="Close menu" className="absolute inset-0 bg-black/60" onClick={() => setMobileOpen(false)} />
-        <aside className="relative h-full w-64 border-r border-white/10 bg-[#09140f] p-4">
-          <div className="mb-7 flex items-center justify-between"><span className="flex items-center gap-2 text-sm font-semibold"><span className="flex size-8 items-center justify-center rounded-lg bg-emerald-400 text-[#052116]"><Sparkles className="size-4" /></span>RAGForge</span><button onClick={() => setMobileOpen(false)}><X className="size-4" /></button></div>
-          <nav className="space-y-1">{nav.map((item) => <button key={item.label} onClick={() => { if (item.href) router.push(item.href); setMobileOpen(false); }} className="flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm text-[#93a39c] hover:bg-white/5 hover:text-white"><item.icon className="size-4" />{item.label}</button>)}</nav>
-          <button onClick={logout} className="absolute bottom-5 left-4 flex items-center gap-2 text-sm text-[#93a39c]"><LogOut className="size-4" />Sign out</button>
-        </aside>
-      </div> : null}
-
-      {searchOpen ? <div className="fixed inset-0 z-[100] flex items-start justify-center bg-black/60 px-4 pt-[14vh] backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}>
-        <div className="w-full max-w-xl overflow-hidden rounded-xl border border-white/10 bg-[#0e1c17] shadow-2xl">
-          <div className="flex items-center gap-3 border-b border-white/10 px-4"><Search className="size-4 text-[#64736d]" /><input autoFocus className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-[#64736d]" placeholder="Search projects, documents, queries…" /><span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-[#64736d]">ESC</span></div>
-          <div className="p-5 text-center"><Search className="mx-auto size-4 text-[#53625b]" /><p className="mt-2 text-[10px] text-[#93a39c]">Start typing to search your workspace</p><p className="mt-1 text-[8px] text-[#53625b]">Results will come from your projects, documents, and query history.</p></div>
-        </div>
-      </div> : null}
+      <div className="border-t border-white/[0.08] p-2">
+        <button onClick={toggleCollapsed} className={cn("hidden h-10 w-full items-center gap-3 rounded-[10px] px-3 text-[11px] text-[#71847b] hover:bg-white/[0.04] hover:text-white md:flex", collapsed && "justify-center px-0")} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+          {collapsed ? <PanelLeftOpen className="size-4" /> : <><PanelLeftClose className="size-4" /><span>Collapse sidebar</span></>}
+        </button>
+      </div>
     </div>
   );
+
+  return <div className="min-h-dvh bg-[var(--background)] text-[var(--ink)]">
+    <aside className={cn("fixed inset-y-0 left-0 z-50 hidden border-r border-white/[0.08] bg-[#08130f] transition-[width] duration-200 md:block", collapsed ? "w-[68px]" : "w-60")}>{sidebar()}</aside>
+
+    <div className={cn("min-h-dvh transition-[padding] duration-200", collapsed ? "md:pl-[68px]" : "md:pl-60")}>
+      <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-white/[0.08] bg-[#09140f]/95 px-3 backdrop-blur-xl sm:px-5">
+        <div className="flex min-w-0 items-center gap-2">
+          <button className="icon-button md:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Menu className="size-5" /></button>
+          <nav className="hidden min-w-0 items-center gap-1.5 sm:flex" aria-label="Breadcrumbs">
+            <Link href="/projects" className="text-[11px] text-[#71847b] hover:text-white">RAGForge</Link>
+            {breadcrumbs.slice(-3).map((label, index, shown) => <span key={`${label}-${index}`} className="flex min-w-0 items-center gap-1.5">
+              <ChevronRight className="size-3 shrink-0 text-[#40524a]" />
+              <span className={cn("max-w-40 truncate text-[11px] capitalize", index === shown.length - 1 ? "text-[#dce6e1]" : "text-[#71847b]")}>{label}</span>
+            </span>)}
+          </nav>
+          <span className="truncate text-sm font-medium sm:hidden">{breadcrumbs.at(-1) ?? "RAGForge"}</span>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <label className="hidden h-9 items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.025] px-2.5 lg:flex">
+            <Building2 className="size-3.5 text-[#64736d]" />
+            <span className="sr-only">Organization</span>
+            <select
+              value={user?.organization_id ?? ""}
+              onChange={(event) => switchOrganization.mutate(event.target.value)}
+              className="max-w-40 bg-transparent text-[11px] text-[#b8c5bf] outline-none"
+              aria-label="Organization switcher"
+            >
+              <option value="">Personal workspace</option>
+              {organizations.map((organization) => <option key={organization.organization_id} value={organization.organization_id}>{organization.name}</option>)}
+            </select>
+            <ChevronDown className="size-3 text-[#53625b]" />
+          </label>
+          <button onClick={() => setPaletteOpen(true)} className="hidden h-9 w-52 items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.025] px-3 text-left text-[10px] text-[#64736d] hover:border-white/[0.15] lg:flex" aria-label="Open global search">
+            <Search className="size-3.5" /><span className="flex-1">Search projects</span><kbd className="rounded border border-white/10 px-1.5 py-0.5 text-[8px]">⌘ K</kbd>
+          </button>
+          <button className="icon-button lg:hidden" onClick={() => setPaletteOpen(true)} aria-label="Open global search"><Search className="size-4" /></button>
+          <div className="relative">
+            <button className="icon-button" onClick={() => {setNotificationsOpen((value) => !value); setUserMenuOpen(false);}} aria-label="Notifications" aria-expanded={notificationsOpen}><Bell className="size-4" /></button>
+            {notificationsOpen ? <div className="popover right-0 top-11 w-72 p-4"><p className="text-xs font-semibold">Notifications</p><div className="mt-4 rounded-lg bg-white/[0.025] p-4 text-center"><Bell className="mx-auto size-4 text-[#53625b]" /><p className="mt-2 text-[10px] text-[#93a39c]">No new notifications</p><p className="mt-1 text-[8px] text-[#53625b]">Pipeline failures remain visible in ingestion runs.</p></div></div> : null}
+          </div>
+          <div className="relative">
+            <button onClick={() => {setUserMenuOpen((value) => !value); setNotificationsOpen(false);}} className="flex h-9 items-center gap-2 rounded-[10px] px-1.5 hover:bg-white/[0.04]" aria-label="User menu" aria-expanded={userMenuOpen}>
+              <span className="flex size-7 items-center justify-center rounded-full bg-[#26483b] text-[9px] font-semibold text-emerald-100">{user ? initials(user.full_name, user.email) : "…"}</span>
+              <ChevronDown className="hidden size-3 text-[#64736d] sm:block" />
+            </button>
+            {userMenuOpen ? <div className="popover right-0 top-11 w-56 p-1.5">
+              <div className="border-b border-white/[0.08] px-2.5 py-2"><p className="truncate text-[11px] font-medium">{user?.full_name || "RAGForge user"}</p><p className="mt-0.5 truncate text-[9px] text-[#64736d]">{user?.email}</p></div>
+              <Link href="/settings/profile" onClick={() => setUserMenuOpen(false)} className="menu-item"><UserRound className="size-3.5" />Profile settings</Link>
+              <button onClick={logout} className="menu-item w-full"><LogOut className="size-3.5" />Sign out</button>
+            </div> : null}
+          </div>
+        </div>
+      </header>
+      <main className={cn("min-h-[calc(100dvh-4rem)]", projectId && pathname.endsWith("/documents") ? "h-[calc(100dvh-4rem)] overflow-hidden" : "px-4 py-6 sm:px-6 lg:px-8 lg:py-8")}>{children}</main>
+    </div>
+
+    {mobileOpen ? <div className="fixed inset-0 z-[100] md:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
+      <button className="absolute inset-0 bg-black/65" onClick={() => setMobileOpen(false)} aria-label="Close navigation" />
+      <aside className="relative h-full w-[min(19rem,88vw)] border-r border-white/10 bg-[#08130f] shadow-2xl">{sidebar(true)}</aside>
+    </div> : null}
+
+    {paletteOpen ? <div className="fixed inset-0 z-[110] flex items-start justify-center bg-black/70 px-4 pt-[12vh] backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Global search" onMouseDown={(event) => {if (event.target === event.currentTarget) setPaletteOpen(false);}}>
+      <div className="w-full max-w-xl overflow-hidden rounded-xl border border-white/10 bg-[#0e1c17] shadow-2xl">
+        <label className="flex h-13 items-center gap-3 border-b border-white/[0.08] px-4"><Search className="size-4 text-[#64736d]" /><span className="sr-only">Search projects</span><input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#53625b]" placeholder="Search projects…" /><button onClick={() => setPaletteOpen(false)} className="rounded border border-white/10 px-1.5 py-1 text-[8px] text-[#64736d]">ESC</button></label>
+        <div className="max-h-80 overflow-y-auto p-2">
+          <p className="px-2 py-1.5 text-[8px] font-semibold uppercase tracking-[.14em] text-[#53625b]">Projects</p>
+          {searchResults.map((item) => <button key={item.project_id} onClick={() => {router.push(`/projects/${item.project_id}/documents`); setPaletteOpen(false);}} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-white/[0.04]"><span className="flex size-8 items-center justify-center rounded-lg bg-emerald-400/10 text-emerald-300"><FolderKanban className="size-4" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{item.name}</span><span className="font-mono text-[8px] text-[#53625b]">{item.project_id}</span></span><ChevronRight className="size-3 text-[#53625b]" /></button>)}
+          {!searchResults.length ? <p className="px-3 py-8 text-center text-[10px] text-[#64736d]">No projects match “{search}”.</p> : null}
+        </div>
+        <div className="flex items-center gap-4 border-t border-white/[0.08] px-4 py-2 text-[8px] text-[#53625b]"><span><kbd>↑↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span className="ml-auto flex items-center gap-1"><Command className="size-2.5" />K anywhere</span></div>
+      </div>
+    </div> : null}
+  </div>;
 }
