@@ -1,7 +1,15 @@
+# syntax=docker/dockerfile:1.7
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# Registry reads can be transiently slow in container builds. Keep npm's cache
+# between BuildKit builds and retry timed-out downloads before failing.
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --fund=false --prefer-offline \
+      --fetch-retries=5 \
+      --fetch-retry-factor=2 \
+      --fetch-retry-mintimeout=20000 \
+      --fetch-retry-maxtimeout=120000
 
 FROM node:22-alpine AS builder
 WORKDIR /app
