@@ -8,6 +8,10 @@ vi.mock("@/lib/api", () => ({
   apiFetch: vi.fn(),
 }));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({push: vi.fn(), replace: vi.fn(), refresh: vi.fn()}),
+}));
+
 function renderPage() {
   const client = new QueryClient({
     defaultOptions: {queries: {retry: false}},

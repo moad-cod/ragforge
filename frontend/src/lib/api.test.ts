@@ -1,5 +1,5 @@
 import {afterEach, describe, expect, it, vi} from "vitest";
-import {apiFetch, ApiError} from "@/lib/api";
+import {apiFetch} from "@/lib/api";
 
 describe("apiFetch", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -32,7 +32,7 @@ describe("apiFetch", () => {
     );
 
     await expect(apiFetch("/auth/register")).rejects.toEqual(
-      expect.objectContaining<ApiError>({
+      expect.objectContaining({
         status: 422,
         message: "organization_id must be a valid UUID",
       }),
