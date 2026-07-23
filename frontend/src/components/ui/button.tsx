@@ -19,7 +19,7 @@ export function Button({
       className={cn(
         "inline-flex items-center justify-center gap-2 rounded-xl font-medium transition disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2",
         variant === "primary" &&
-          "bg-[var(--accent)] text-[#041d13] shadow-sm hover:bg-[var(--accent-strong)]",
+          "bg-[var(--accent)] text-[var(--ink-inverse)] shadow-sm hover:bg-[var(--accent-strong)]",
         variant === "secondary" &&
           "border border-[var(--border)] bg-[var(--surface-muted)] text-[var(--ink)] hover:bg-[var(--surface-hover)]",
         variant === "ghost" &&
