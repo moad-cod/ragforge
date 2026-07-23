@@ -33,9 +33,11 @@ describe("AssistantPanel", () => {
     render(<QueryClientProvider client={new QueryClient()}><AssistantPanel projectId="project-1" projectName="Research" documents={[document]} selectedIds={["document-1"]} onRemoveSelected={vi.fn()} onCitation={onCitation} onOpenTrace={vi.fn()} /></QueryClientProvider>);
 
     const user = userEvent.setup();
-    await user.type(screen.getByPlaceholderText("Ask a question about your knowledge base…"), "What changed?");
+    await user.type(screen.getByPlaceholderText(/Ask a question about your knowledge base/), "What changed?");
     await user.click(screen.getByRole("button", {name: "Send question"}));
 
+    expect(await screen.findByText("Execution trace")).toBeInTheDocument();
+    expect(screen.getByText("Generated response")).toBeInTheDocument();
     expect(await screen.findByText("Hello")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", {name: /Report · p\.2/})).toBeInTheDocument());
     const [, request] = vi.mocked(fetch).mock.calls[0];
