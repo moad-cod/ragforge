@@ -6,7 +6,7 @@ export default function AuthLayout({children}: {children: React.ReactNode}) {
       <section className="subtle-grid hidden overflow-hidden bg-[var(--surface-dark)] p-12 text-white lg:flex lg:flex-col">
         <Brand inverse />
         <div className="my-auto max-w-xl">
-          <div className="mb-6 inline-flex rounded-full border border-emerald-400/20 bg-emerald-400/[0.06] px-3 py-1 text-xs font-medium text-emerald-200">
+          <div className="mb-6 inline-flex rounded-full border border-[var(--accent-border)] bg-[var(--accent-soft)] px-3 py-1 text-xs font-medium text-[var(--accent-hover)]">
             Durable RAG operations, made visible
           </div>
           <h1 className="text-4xl font-semibold leading-[1.1] tracking-tight">
