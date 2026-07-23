@@ -142,7 +142,7 @@ export function AppShell({children}: {children: React.ReactNode}) {
   const sidebar = (mobile = false) => (
     <div className="flex h-full flex-col">
       <div className="flex h-16 items-center gap-3 border-b border-white/[0.08] px-3">
-        <Link href="/projects" className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] text-[#041d13]" aria-label="RAGForge home">
+        <Link href="/projects" className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent)] text-[var(--ink-inverse)]" aria-label="RAGForge home">
           <Sparkles className="size-5" />
         </Link>
         {(!collapsed || mobile) ? <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">RAGForge</span> : null}
@@ -159,8 +159,8 @@ export function AppShell({children}: {children: React.ReactNode}) {
             aria-current={selected ? "page" : undefined}
             onClick={() => setMobileOpen(false)}
             className={cn(
-              "group flex h-10 items-center gap-3 rounded-[10px] px-3 text-[12px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
-              selected ? "bg-emerald-400/10 text-emerald-200" : "text-[#83948c] hover:bg-white/[0.045] hover:text-white",
+              "group flex h-10 items-center gap-3 rounded-[10px] border px-3 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]",
+              selected ? "border-[var(--accent-border)] bg-[var(--accent-soft)] text-[var(--accent)]" : "border-transparent text-[#83948c] hover:bg-[var(--surface-hover)] hover:text-white",
               collapsed && !mobile && "justify-center px-0",
             )}
           >
@@ -178,10 +178,10 @@ export function AppShell({children}: {children: React.ReactNode}) {
   );
 
   return <div className="min-h-dvh bg-[var(--background)] text-[var(--ink)]">
-    <aside className={cn("fixed inset-y-0 left-0 z-50 hidden border-r border-white/[0.08] bg-[#08130f] transition-[width] duration-200 md:block", collapsed ? "w-[68px]" : "w-60")}>{sidebar()}</aside>
+    <aside className={cn("fixed inset-y-0 left-0 z-50 hidden border-r border-[var(--border)] bg-[#090909] transition-[width] duration-200 md:block", collapsed ? "w-[68px]" : "w-[214px]")}>{sidebar()}</aside>
 
-    <div className={cn("min-h-dvh transition-[padding] duration-200", collapsed ? "md:pl-[68px]" : "md:pl-60")}>
-      <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-white/[0.08] bg-[#09140f]/95 px-3 backdrop-blur-xl sm:px-5">
+    <div className={cn("min-h-dvh transition-[padding] duration-200", collapsed ? "md:pl-[68px]" : "md:pl-[214px]")}>
+      <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-[var(--border)] bg-[#090909]/95 px-3 backdrop-blur-xl sm:px-5">
         <div className="flex min-w-0 items-center gap-2">
           <button className="icon-button md:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Menu className="size-5" /></button>
           <nav className="hidden min-w-0 items-center gap-1.5 sm:flex" aria-label="Breadcrumbs">
@@ -219,7 +219,7 @@ export function AppShell({children}: {children: React.ReactNode}) {
           </div>
           <div className="relative">
             <button onClick={() => {setUserMenuOpen((value) => !value); setNotificationsOpen(false);}} className="flex h-9 items-center gap-2 rounded-[10px] px-1.5 hover:bg-white/[0.04]" aria-label="User menu" aria-expanded={userMenuOpen}>
-              <span className="flex size-7 items-center justify-center rounded-full bg-[#26483b] text-[9px] font-semibold text-emerald-100">{user ? initials(user.full_name, user.email) : "…"}</span>
+              <span className="flex size-7 items-center justify-center rounded-full bg-[var(--surface-raised)] text-[9px] font-semibold text-[var(--accent-strong)]">{user ? initials(user.full_name, user.email) : "…"}</span>
               <ChevronDown className="hidden size-3 text-[#64736d] sm:block" />
             </button>
             {userMenuOpen ? <div className="popover right-0 top-11 w-56 p-1.5">
@@ -235,15 +235,15 @@ export function AppShell({children}: {children: React.ReactNode}) {
 
     {mobileOpen ? <div className="fixed inset-0 z-[100] md:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
       <button className="absolute inset-0 bg-black/65" onClick={() => setMobileOpen(false)} aria-label="Close navigation" />
-      <aside className="relative h-full w-[min(19rem,88vw)] border-r border-white/10 bg-[#08130f] shadow-2xl">{sidebar(true)}</aside>
+      <aside className="relative h-full w-[min(19rem,88vw)] border-r border-[var(--border)] bg-[#090909] shadow-2xl">{sidebar(true)}</aside>
     </div> : null}
 
     {paletteOpen ? <div className="fixed inset-0 z-[110] flex items-start justify-center bg-black/70 px-4 pt-[12vh] backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Global search" onMouseDown={(event) => {if (event.target === event.currentTarget) setPaletteOpen(false);}}>
-      <div className="w-full max-w-xl overflow-hidden rounded-xl border border-white/10 bg-[#0e1c17] shadow-2xl">
+      <div className="w-full max-w-xl overflow-hidden rounded-xl border border-white/10 bg-[var(--surface-muted)] shadow-2xl">
         <label className="flex h-13 items-center gap-3 border-b border-white/[0.08] px-4"><Search className="size-4 text-[#64736d]" /><span className="sr-only">Search projects</span><input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#53625b]" placeholder="Search projects…" /><button onClick={() => setPaletteOpen(false)} className="rounded border border-white/10 px-1.5 py-1 text-[8px] text-[#64736d]">ESC</button></label>
         <div className="max-h-80 overflow-y-auto p-2">
           <p className="px-2 py-1.5 text-[8px] font-semibold uppercase tracking-[.14em] text-[#53625b]">Projects</p>
-          {searchResults.map((item) => <button key={item.project_id} onClick={() => {router.push(`/projects/${item.project_id}/documents`); setPaletteOpen(false);}} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-white/[0.04]"><span className="flex size-8 items-center justify-center rounded-lg bg-emerald-400/10 text-emerald-300"><FolderKanban className="size-4" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{item.name}</span><span className="font-mono text-[8px] text-[#53625b]">{item.project_id}</span></span><ChevronRight className="size-3 text-[#53625b]" /></button>)}
+          {searchResults.map((item) => <button key={item.project_id} onClick={() => {router.push(`/projects/${item.project_id}/documents`); setPaletteOpen(false);}} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-white/[0.04]"><span className="flex size-8 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]"><FolderKanban className="size-4" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{item.name}</span><span className="font-mono text-[8px] text-[#53625b]">{item.project_id}</span></span><ChevronRight className="size-3 text-[#53625b]" /></button>)}
           {!searchResults.length ? <p className="px-3 py-8 text-center text-[10px] text-[#64736d]">No projects match “{search}”.</p> : null}
         </div>
         <div className="flex items-center gap-4 border-t border-white/[0.08] px-4 py-2 text-[8px] text-[#53625b]"><span><kbd>↑↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span className="ml-auto flex items-center gap-1"><Command className="size-2.5" />K anywhere</span></div>
