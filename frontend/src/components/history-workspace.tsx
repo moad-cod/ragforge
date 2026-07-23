@@ -81,7 +81,7 @@ export function HistoryWorkspace({projectId}: {projectId: string}) {
                       {item.question}
                     </p>
                     {item.answer ? (
-                      <CheckCircle2 className="size-4 shrink-0 text-emerald-500" />
+                      <CheckCircle2 className="size-4 shrink-0 text-[var(--success)]" />
                     ) : (
                       <XCircle className="size-4 shrink-0 text-red-500" />
                     )}
@@ -96,7 +96,7 @@ export function HistoryWorkspace({projectId}: {projectId: string}) {
                     {item.cache_hit ? (
                       <>
                         <span>·</span>
-                        <span className="text-emerald-600">cached</span>
+                        <span className="text-[var(--success)]">cached</span>
                       </>
                     ) : null}
                   </div>
