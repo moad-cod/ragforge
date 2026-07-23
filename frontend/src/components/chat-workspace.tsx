@@ -204,7 +204,7 @@ export function ChatWorkspace({projectId}: {projectId: string}) {
         <div className="border-b border-[var(--border)] px-5 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm">
-              <span className="size-2 rounded-full bg-emerald-500" />
+              <span className="size-2 rounded-full bg-[var(--success)]" />
               <span className="font-medium">{indexedDocuments.length} indexed</span>
               <span className="text-[var(--ink-muted)]">
                 {indexedDocuments.length === 1 ? "document" : "documents"}
