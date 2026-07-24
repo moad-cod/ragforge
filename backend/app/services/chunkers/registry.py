@@ -33,7 +33,10 @@ class ChunkerDefinition:
 
     def load_callable(self) -> Callable:
         module_path, function_name = self.callable_path.split(":", 1)
-        return getattr(import_module(module_path), function_name)
+        value = getattr(import_module(module_path), function_name)
+        if not callable(value):
+            raise TypeError(f"Configured chunker target {self.callable_path!r} is not callable")
+        return value
 
 
 CHUNKER_REGISTRY: dict[str, ChunkerDefinition] = {
