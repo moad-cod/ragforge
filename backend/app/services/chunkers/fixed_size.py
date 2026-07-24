@@ -1,10 +1,21 @@
-def chunk(text: str, chunk_size: int = 512, overlap: int = 50) -> list[str]:
-    """
-    Split text into fixed-size chunks by character count with overlap.
-    Unlike paragraph.py (word-based), this splits on characters — 
-    more predictable token counts for LLM context windows.
-    """
-    if not text.strip():
+def chunk(
+    text: str,
+    chunk_size: int = 512,
+    overlap: int = 50,
+    min_chunk_chars: int = 1,
+) -> list[str]:
+    """Split text into bounded character windows with optional overlap."""
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    if overlap < 0:
+        raise ValueError("overlap must be non-negative")
+    if overlap >= chunk_size:
+        raise ValueError("overlap must be smaller than chunk_size")
+    if min_chunk_chars <= 0:
+        raise ValueError("min_chunk_chars must be positive")
+
+    text = text.strip()
+    if not text:
         return []
 
     chunks = []
