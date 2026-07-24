@@ -22,20 +22,23 @@ def chunk(
     start = 0
 
     while start < len(text):
-        end = start + chunk_size
+        proposed_end = min(start + chunk_size, len(text))
+        end = proposed_end
 
-        # avoid cutting in the middle of a word
-        if end < len(text):
-            # walk back to nearest whitespace
-            while end > start and text[end] not in (" ", "\n", "\t"):
+        if proposed_end < len(text):
+            while end > start and not text[end].isspace():
                 end -= 1
             if end == start:
-                end = start + chunk_size  # fallback: hard cut
+                end = proposed_end
 
         value = text[start:end].strip()
         if len(value) >= min_chunk_chars:
             chunks.append(value)
 
-        start = end - overlap  # overlap in characters
+        if end >= len(text):
+            break
+
+        next_start = end - overlap
+        start = next_start if next_start > start else end
 
     return chunks
