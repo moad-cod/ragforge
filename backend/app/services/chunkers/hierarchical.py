@@ -56,19 +56,22 @@ def chunk_hierarchical(
             index=parent_index,
         ))
 
-        # split parent into children
         child_index = 0
         for c_start in range(0, len(parent_sentences), child_size):
             child_sentences = parent_sentences[c_start:c_start + child_size]
             child_text = " ".join(child_sentences).strip()
-            if len(child_text) < 20:
-                continue
+            child_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"ragforge:hierarchical:child:{parent_id}:{c_start}:{child_text}",
+                )
+            )
 
             chunks.append(HierarchicalChunk(
                 text=child_text,
                 chunk_type="child",
                 parent_id=parent_id,
-                chunk_id=str(uuid.uuid4()),
+                chunk_id=child_id,
                 index=child_index,
             ))
             child_index += 1
