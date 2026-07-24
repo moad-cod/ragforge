@@ -93,7 +93,7 @@ def _index_late_chunking(text: str, project_id: str, document_id: str, collectio
     return chunks
 
 def _index_hierarchical(text: str, project_id: str, document_id: str, collection: str) -> list[str]:
-    chunks = hierarchical_module.chunk_hierarchical(text)
+    chunks = hierarchical_module.chunk_hierarchical(text, namespace=document_id)
     index_hierarchical_chunks(chunks, project_id, document_id, collection)
     return [c.text for c in chunks if c.chunk_type == "child"]
 
