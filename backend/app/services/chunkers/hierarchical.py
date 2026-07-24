@@ -1,49 +1,53 @@
 from dataclasses import dataclass
+import uuid
+
 from app.services.chunkers.tokenize import split_sentences
+
 
 @dataclass
 class HierarchicalChunk:
     text: str
-    chunk_type: str      
+    chunk_type: str
     parent_id: str | None
     chunk_id: str
     index: int
 
+
 def chunk(text: str) -> list[str]:
-    """
-    Standard interface — returns only child chunks as strings.
-    Use chunk_hierarchical() for full parent/child structure.
-    """
+    """Return child text for the common text-chunker interface."""
     pairs = chunk_hierarchical(text)
     return [c.text for c in pairs if c.chunk_type == "child"]
 
 
 def chunk_hierarchical(
     text: str,
-    parent_size: int = 5,    # sentences per parent
-    child_size: int = 2,     # sentences per child
+    parent_size: int = 5,
+    child_size: int = 2,
+    namespace: str | None = None,
 ) -> list[HierarchicalChunk]:
-    """
-    Returns full hierarchy — both parent and child chunks with relationships.
-    """
-    import uuid
+    """Return deterministic parent and child records grouped by sentence count."""
+    if parent_size <= 0:
+        raise ValueError("parent_size must be positive")
+    if child_size <= 0:
+        raise ValueError("child_size must be positive")
 
-    sentences = [s.strip() for s in split_sentences(text) if len(s.strip()) > 20]
+    sentences = split_sentences(text)
     if not sentences:
         return []
 
-    chunks = []
+    id_namespace = namespace or text
+    chunks: list[HierarchicalChunk] = []
     parent_index = 0
 
     for p_start in range(0, len(sentences), parent_size):
         parent_sentences = sentences[p_start:p_start + parent_size]
         parent_text = " ".join(parent_sentences).strip()
-        if len(parent_text) < 30:
-            continue
-
-        parent_id = str(uuid.uuid4())
-
-        # store parent
+        parent_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"ragforge:hierarchical:{id_namespace}:parent:{p_start}:{parent_text}",
+            )
+        )
         chunks.append(HierarchicalChunk(
             text=parent_text,
             chunk_type="parent",
