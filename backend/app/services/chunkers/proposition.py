@@ -100,7 +100,15 @@ def _classify_failure(exc: Exception) -> str:
     message = str(exc).lower()
     if status == 429 or any(term in message for term in ("rate limit", "rate_limit", "quota", "too many requests")):
         return "Groq rate limit or quota reached"
-    if status in {401, 403} or any(term in message for term in ("invalid api key", "unauthorized", "forbidden")):
+    if status in {401, 403} or any(
+        term in message
+        for term in (
+            "api key",
+            "api_key",
+            "unauthorized",
+            "forbidden",
+        )
+    ):
         return "Groq authentication failed"
     if status and status >= 500:
         return "Groq service error"
