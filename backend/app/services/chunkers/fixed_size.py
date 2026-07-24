@@ -18,7 +18,7 @@ def chunk(
     if not text:
         return []
 
-    chunks = []
+    chunks: list[str] = []
     start = 0
 
     while start < len(text):
@@ -32,9 +32,9 @@ def chunk(
             if end == start:
                 end = start + chunk_size  # fallback: hard cut
 
-        chunk = text[start:end].strip()
-        if len(chunk) > 30:
-            chunks.append(chunk)
+        value = text[start:end].strip()
+        if len(value) >= min_chunk_chars:
+            chunks.append(value)
 
         start = end - overlap  # overlap in characters
 
