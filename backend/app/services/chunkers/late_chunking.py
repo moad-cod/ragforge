@@ -1,63 +1,82 @@
 import numpy as np
+
 from app.services.embedder import embed_texts
 from app.services.chunkers.tokenize import split_sentences
 
-def chunk(text: str, chunk_size: int = 5, min_chunk_len: int = 50) -> list[str]:
-    """
-    Late chunking — embed the full document first, then group sentences.
-    Each chunk inherits contextual embeddings from the whole document.
 
-    chunk_size: number of sentences per chunk
-    """
-    # 1. split into sentences
-    sentences = [s.strip() for s in split_sentences(text) if len(s.strip()) > 20]
+def _sentence_groups(
+    text: str,
+    chunk_size: int,
+    min_chunk_len: int,
+) -> list[list[str]]:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    if min_chunk_len <= 0:
+        raise ValueError("min_chunk_len must be positive")
+
+    sentences = split_sentences(text)
     if not sentences:
         return []
 
-    # 2. embed ALL sentences together (full document context)
-    # this is the key difference — context from the whole doc flows into each embedding
-    embeddings = np.array(embed_texts(sentences))
+    raw_groups = [
+        sentences[start:start + chunk_size]
+        for start in range(0, len(sentences), chunk_size)
+    ]
+    groups: list[list[str]] = []
+    pending: list[str] = []
+    for group in raw_groups:
+        candidate = pending + group
+        if len(" ".join(candidate).strip()) < min_chunk_len:
+            pending = candidate
+            continue
+        groups.append(candidate)
+        pending = []
 
-    # 3. group sentences into chunks of chunk_size
-    # the embeddings already have full context baked in
-    chunks = []
-    for i in range(0, len(sentences), chunk_size):
-        group = sentences[i:i + chunk_size]
-        chunk_text = " ".join(group).strip()
-        if len(chunk_text) >= min_chunk_len:
-            chunks.append(chunk_text)
-
-    return chunks
+    if pending:
+        if groups:
+            groups[-1].extend(pending)
+        else:
+            groups.append(pending)
+    return groups
 
 
-def chunk_with_embeddings(text: str, chunk_size: int = 5) -> tuple[list[str], list[list[float]]]:
-    """
-    Returns both chunks AND their context-aware embeddings.
-    Use this in indexer for true late chunking — skip re-embedding later.
-    """
-    sentences = [s.strip() for s in split_sentences(text) if len(s.strip()) > 20]
-    if not sentences:
+def chunk(text: str, chunk_size: int = 5, min_chunk_len: int = 50) -> list[str]:
+    """Group sentences for callers that need text chunks only."""
+    return [
+        " ".join(group).strip()
+        for group in _sentence_groups(text, chunk_size, min_chunk_len)
+    ]
+
+
+def chunk_with_embeddings(
+    text: str,
+    chunk_size: int = 5,
+    min_chunk_len: int = 50,
+) -> tuple[list[str], list[list[float]]]:
+    """Return sentence groups and normalized mean-pooled sentence vectors."""
+    groups = _sentence_groups(text, chunk_size, min_chunk_len)
+    if not groups:
         return [], []
 
-    # embed full document at once
-    all_embeddings = np.array(embed_texts(sentences))
+    sentences = [sentence for group in groups for sentence in group]
+    all_embeddings = np.asarray(embed_texts(sentences), dtype=np.float32)
+    if all_embeddings.ndim != 2 or all_embeddings.shape[0] != len(sentences):
+        raise ValueError("embedding backend returned an unexpected number of vectors")
 
-    chunks = []
-    chunk_embeddings = []
+    chunks: list[str] = []
+    chunk_embeddings: list[list[float]] = []
+    offset = 0
 
-    for i in range(0, len(sentences), chunk_size):
-        group_sentences = sentences[i:i + chunk_size]
-        group_embeddings = all_embeddings[i:i + chunk_size]
-
-        chunk_text = " ".join(group_sentences).strip()
-        if len(chunk_text) < 50:
-            continue
-
+    for group in groups:
+        group_embeddings = all_embeddings[offset:offset + len(group)]
+        offset += len(group)
         # mean pooling over the group's embeddings
         chunk_embedding = np.mean(group_embeddings, axis=0)
-        chunk_embedding = chunk_embedding / (np.linalg.norm(chunk_embedding) + 1e-10)
+        norm = np.linalg.norm(chunk_embedding)
+        if norm:
+            chunk_embedding = chunk_embedding / norm
 
-        chunks.append(chunk_text)
+        chunks.append(" ".join(group).strip())
         chunk_embeddings.append(chunk_embedding.tolist())
 
     return chunks, chunk_embeddings
