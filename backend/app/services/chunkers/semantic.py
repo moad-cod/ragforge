@@ -35,41 +35,34 @@ def _merge_short_chunks(chunks: list[str], min_chunk_len: int) -> list[str]:
 
 
 def chunk(text: str, threshold: float = 0.5, min_chunk_len: int = 50) -> list[str]:
-    """
-    Split text into semantically coherent chunks.
-    A new chunk starts when the similarity between adjacent
-    sentences drops below the threshold.
-    """
-    # 1. split into sentences
-    sentences = [s.strip() for s in split_sentences(text) if len(s.strip()) > 20]
+    """Split text when adjacent sentence embeddings indicate a topic shift."""
+    if not -1.0 <= threshold <= 1.0:
+        raise ValueError("threshold must be between -1.0 and 1.0")
+    if min_chunk_len <= 0:
+        raise ValueError("min_chunk_len must be positive")
+
+    sentences = split_sentences(text)
     if not sentences:
         return []
     if len(sentences) == 1:
         return sentences
 
-    # 2. embed all sentences at once (fast batch)
-    embeddings = np.array(embed_texts(sentences))
+    embeddings = np.asarray(embed_texts(sentences), dtype=np.float32)
+    if embeddings.ndim != 2 or embeddings.shape[0] != len(sentences):
+        raise ValueError("embedding backend returned an unexpected number of vectors")
 
-    # 3. find split points where similarity drops
-    chunks = []
+    chunks: list[str] = []
     current = [sentences[0]]
 
     for i in range(1, len(sentences)):
         sim = _cosine_similarity(embeddings[i - 1], embeddings[i])
         if sim >= threshold:
-            # same topic — keep in current chunk
             current.append(sentences[i])
         else:
-            # topic shift — save current chunk, start new one
-            chunk_text = " ".join(current).strip()
-            if len(chunk_text) >= min_chunk_len:
-                chunks.append(chunk_text)
+            chunks.append(" ".join(current).strip())
             current = [sentences[i]]
 
-    # 4. don't forget the last chunk
     if current:
-        chunk_text = " ".join(current).strip()
-        if len(chunk_text) >= min_chunk_len:
-            chunks.append(chunk_text)
+        chunks.append(" ".join(current).strip())
 
-    return chunks
+    return _merge_short_chunks(chunks, min_chunk_len)
