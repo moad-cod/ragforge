@@ -116,14 +116,32 @@ def _classify_failure(exc: Exception) -> str:
         return "Groq returned non-JSON content"
     return "Proposition extraction failed"
 
-def chunk(text: str) -> list[str]:
-    # Split into paragraphs first, then decompose each
-    paragraphs = [p.strip() for p in text.split("\n\n") if len(p.strip()) > 50]
-    all_propositions = []
+
+
+def chunk(text: str, min_paragraph_chars: int = 50) -> list[str]:
+    """Extract propositions per paragraph, preserving text on every failure."""
+    if min_paragraph_chars <= 0:
+        raise ValueError("min_paragraph_chars must be positive")
+
+    paragraphs = [
+        paragraph.strip()
+        for paragraph in re.split(r"\n\s*\n+", text or "")
+        if paragraph.strip()
+    ]
+    all_propositions: list[str] = []
     failures: dict[str, int] = {}
     first_failure_by_reason: dict[str, str] = {}
+    unavailable_reason: str | None = None
 
     for para in paragraphs:
+        if len(para) < min_paragraph_chars:
+            all_propositions.append(para)
+            continue
+        if unavailable_reason is not None:
+            failures[unavailable_reason] = failures.get(unavailable_reason, 0) + 1
+            all_propositions.append(para)
+            continue
+
         try:
             response = _get_client().chat.completions.create(
                 model="qwen/qwen3.6-27b",
