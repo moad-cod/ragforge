@@ -50,14 +50,22 @@ def _clean_json_text(raw: str) -> str:
 
 def _extract_json_candidate(raw: str) -> str:
     raw = _clean_json_text(raw)
-    starts = [idx for idx in (raw.find("{"), raw.find("[")) if idx != -1]
+    starts = [
+        index
+        for index, character in enumerate(raw)
+        if character in "[{"
+    ]
     if not starts:
         raise ValueError("Model response did not contain JSON")
 
-    start = min(starts)
     decoder = json.JSONDecoder()
-    _, end = decoder.raw_decode(raw[start:])
-    return raw[start:start + end]
+    for start in starts:
+        try:
+            _, end = decoder.raw_decode(raw[start:])
+        except json.JSONDecodeError:
+            continue
+        return raw[start:start + end]
+    raise ValueError("Model response did not contain valid JSON")
 
 def _parse_propositions(raw: str) -> list[str]:
     candidate = _extract_json_candidate(raw)
