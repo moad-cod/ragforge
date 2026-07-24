@@ -30,15 +30,16 @@ Each proposition must:
 - Be as short as possible
 
 Return ONLY valid JSON in this exact shape:
-{"propositions": ["first proposition", "second proposition"]}
+{{"propositions": ["first proposition", "second proposition"]}}
 
 Do not use markdown, code fences, comments, or explanations.
 
 Example output:
-{"propositions": ["FloodScan data covers 1998 to 2022.", "WorldPop 2020 data was used.", "Somalia has two flood seasons."]}
+{{"propositions": ["FloodScan data covers 1998 to 2022.", "WorldPop 2020 data was used.", "Somalia has two flood seasons."]}}
 
 Text to decompose:
 {text}"""
+
 
 def _clean_json_text(raw: str) -> str:
     raw = raw.strip()
