@@ -77,7 +77,11 @@ def _parse_propositions(raw: str) -> list[str]:
     if not isinstance(data, list):
         raise ValueError("Proposition response was not a list")
 
-    propositions = [str(item).strip() for item in data if str(item).strip()]
+    propositions = [
+        item.strip()
+        for item in data
+        if isinstance(item, str) and item.strip()
+    ]
     if not propositions:
         raise ValueError("Proposition response was empty")
     return propositions
