@@ -1,20 +1,26 @@
-from groq import Groq
-from app.core.config import settings
 import json
 import logging
 import re
+from threading import Lock
+
+from groq import Groq
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 _client = None
+_client_lock = Lock()
 
 
 def _get_client() -> Groq:
     global _client
     if _client is None:
-        if not settings.GROQ_API_KEY:
-            raise RuntimeError("GROQ_API_KEY is required for proposition chunking")
-        _client = Groq(api_key=settings.GROQ_API_KEY)
+        with _client_lock:
+            if _client is None:
+                if not settings.GROQ_API_KEY:
+                    raise RuntimeError("GROQ_API_KEY is required for proposition chunking")
+                _client = Groq(api_key=settings.GROQ_API_KEY)
     return _client
 
 PROPOSITION_PROMPT = """Decompose the following text into simple, atomic propositions.
