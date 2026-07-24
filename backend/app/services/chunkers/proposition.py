@@ -152,15 +152,21 @@ def chunk(text: str, min_paragraph_chars: int = 50) -> list[str]:
                 max_tokens=1024,
                 temperature=0,
             )
-            raw = response.choices[0].message.content.strip()
+            raw = response.choices[0].message.content
+            if not isinstance(raw, str) or not raw.strip():
+                raise ValueError("Proposition response was empty")
             propositions = _parse_propositions(raw)
             all_propositions.extend(propositions)
         except Exception as e:
-            # Fallback: keep the paragraph as-is
             reason = _classify_failure(e)
             failures[reason] = failures.get(reason, 0) + 1
             first_failure_by_reason.setdefault(reason, str(e))
             all_propositions.append(para)
+            if reason in {
+                "Groq rate limit or quota reached",
+                "Groq authentication failed",
+            }:
+                unavailable_reason = reason
 
     if failures:
         total_failures = sum(failures.values())
@@ -170,9 +176,16 @@ def chunk(text: str, min_paragraph_chars: int = 50) -> list[str]:
                 reason,
                 count,
                 len(paragraphs),
-                first_failure_by_reason[reason],
+                first_failure_by_reason.get(reason, "request skipped after provider failure"),
             )
-        if total_failures == len(paragraphs) and "Groq rate limit or quota reached" in failures:
+        attempted_paragraphs = sum(
+            len(paragraph) >= min_paragraph_chars
+            for paragraph in paragraphs
+        )
+        if (
+            total_failures == attempted_paragraphs
+            and "Groq rate limit or quota reached" in failures
+        ):
             logger.warning("All proposition requests hit Groq rate/quota limits. Consider skipping the proposition chunker until the quota resets.")
 
     return all_propositions
