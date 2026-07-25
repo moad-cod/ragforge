@@ -41,7 +41,7 @@ describe("AssistantPanel", () => {
     expect(await screen.findByText("Hello")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", {name: /Report · p\.2/})).toBeInTheDocument());
     const [, request] = vi.mocked(fetch).mock.calls[0];
-    expect(JSON.parse(String(request?.body))).toMatchObject({project_id: "project-1", document_id: "document-1", question: "What changed?"});
+    expect(JSON.parse(String(request?.body))).toMatchObject({project_id: "project-1", document_id: "document-1", question: "What changed?", use_parent_context: false});
     expect(JSON.parse(String(request?.body))).not.toHaveProperty("document_ids");
 
     await user.click(screen.getByRole("button", {name: /Report · p\.2/}));

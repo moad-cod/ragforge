@@ -292,6 +292,51 @@ class StructuredHybridRetrievalTests(unittest.TestCase):
         self.assertEqual(query_filter.must[0].key, "project_id")
         self.assertEqual(query_filter.must[0].match.value, "project-id")
 
+    def test_hybrid_search_falls_back_when_parent_context_filters_regular_chunks(self):
+        points = [
+            SimpleNamespace(
+                id="point-1",
+                score=0.71,
+                payload={
+                    "text": "Regular chunk",
+                    "project_id": "project-id",
+                    "document_id": "document-id",
+                },
+            ),
+        ]
+        with (
+            patch(
+                "app.services.retrieval.hybrid.embed_sparse_query",
+                return_value=SparseVector(indices=[1], values=[1.0]),
+            ),
+            patch(
+                "app.services.retrieval.hybrid.qdrant.query_points",
+                side_effect=[
+                    SimpleNamespace(points=[]),
+                    SimpleNamespace(points=points),
+                ],
+            ) as query_points,
+            patch(
+                "app.services.retrieval.hybrid.rerank_with_scores",
+                return_value=[(0, 3.5)],
+            ),
+        ):
+            hits = hybrid_search(
+                dense_embedding=[0.1, 0.2],
+                query_text="question",
+                project_id="project-id",
+                collection="collection",
+                document_id="document-id",
+                use_parent_context=True,
+                top_k=1,
+            )
+
+        self.assertEqual([hit.text for hit in hits], ["Regular chunk"])
+        first_filter = query_points.call_args_list[0].kwargs["query_filter"]
+        second_filter = query_points.call_args_list[1].kwargs["query_filter"]
+        self.assertIn("chunk_type", [condition.key for condition in first_filter.must])
+        self.assertNotIn("chunk_type", [condition.key for condition in second_filter.must])
+
     def test_dense_fallback_returns_structured_hits_and_project_filter(self):
         point = SimpleNamespace(
             id="point-1",

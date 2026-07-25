@@ -39,6 +39,27 @@ def _point_hit(point, *, strategy: str) -> RetrievalHit:
         payload=payload,
     )
 
+
+def _query_points(
+    *,
+    dense_embedding: list[float],
+    sparse_embedding,
+    collection: str,
+    query_filter: Filter,
+    fetch_k: int,
+):
+    return qdrant.query_points(
+        collection_name=collection,
+        prefetch=[
+            Prefetch(query=dense_embedding, using="dense", limit=fetch_k, filter=query_filter),
+            Prefetch(query=sparse_embedding, using="sparse", limit=fetch_k, filter=query_filter),
+        ],
+        query=FusionQuery(fusion=Fusion.RRF),
+        limit=fetch_k,
+        query_filter=query_filter,
+    )
+
+
 def hybrid_search(
     dense_embedding: list[float],
     query_text: str,
@@ -60,16 +81,24 @@ def hybrid_search(
     query_filter = Filter(must=must_conditions)
     sparse_embedding = embed_sparse_query(query_text)
 
-    results = qdrant.query_points(
-        collection_name=collection,
-        prefetch=[
-            Prefetch(query=dense_embedding, using="dense", limit=fetch_k, filter=query_filter),
-            Prefetch(query=sparse_embedding, using="sparse", limit=fetch_k, filter=query_filter),
-        ],
-        query=FusionQuery(fusion=Fusion.RRF),
-        limit=fetch_k,
+    results = _query_points(
+        dense_embedding=dense_embedding,
+        sparse_embedding=sparse_embedding,
+        collection=collection,
         query_filter=query_filter,
+        fetch_k=fetch_k,
     )
+    if use_parent_context and not results.points:
+        must_conditions = [condition for condition in must_conditions if condition.key != "chunk_type"]
+        use_parent_context = False
+        query_filter = Filter(must=must_conditions)
+        results = _query_points(
+            dense_embedding=dense_embedding,
+            sparse_embedding=sparse_embedding,
+            collection=collection,
+            query_filter=query_filter,
+            fetch_k=fetch_k,
+        )
     if not results.points:
         return []
 
