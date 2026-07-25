@@ -1,8 +1,8 @@
 # RAGForge Project Map
 
-RAGForge is a FastAPI SaaS backend for authenticated, multi-tenant Retrieval-Augmented Generation. It ingests files and web sources, versions document content, chunks and embeds text, stores dense and sparse vectors in Qdrant, and answers questions through OpenAI-compatible LLM providers. PostgreSQL also defines the durable v2 control plane for ingestion runs, chunk lineage, embedding runs, query history, and retrieval traces.
+RAGForge is a FastAPI SaaS backend for authenticated Retrieval-Augmented Generation. It ingests files and web sources, versions document content, chunks and embeds text, stores dense and sparse vectors in Qdrant, and answers questions through OpenAI-compatible LLM providers. PostgreSQL defines the durable control plane for identities, projects, ingestion runs, chunk lineage, embedding runs, query history, and retrieval traces.
 
-The default backend is optimized for the text RAG path. Heavy optional features such as ColPali multimodal ingestion and CrossEncoder reranking are kept out of the default runtime requirements so Docker builds stay practical.
+The most complete path is asynchronous file ingestion through MinIO and Airflow. URL, Google Drive, and multimodal ingestion are still synchronous paths and do not create the same run/artifact/chunk lineage. The default backend is optimized for text RAG; ColQwen2 multimodal ingestion and CrossEncoder reranking are kept out of the default requirements.
 
 ## Architecture
 
@@ -40,18 +40,20 @@ Next.js control-plane UI / Swagger UI
 | Pipeline control | `backend/app/api/internal_pipeline.py`, `backend/app/services/ingestion_planner.py` | Authenticated run metadata/status boundary and deterministic technique-to-execution planning |
 | Batch artifacts | `backend/app/services/pipeline_artifacts.py`, `backend/jobs/*.py` | Bronze parsing/chunking, Silver/Gold Parquet, adaptive embedding batches, and Qdrant indexing |
 | Airflow execution | `backend/airflow/dags/ragforge_ingestion.py`, `backend/jobs/ingestion_execution.py` | Detects the selected chunking technique, chooses profile-aware commands, and exports resource hints |
-| Query | `backend/app/api/query.py` | Text RAG query and optional multimodal page query |
+| Query | `backend/app/api/query.py` | Text and multimodal queries, query SSE, history, and retrieval trace responses |
 | Chunker catalog | `backend/app/api/chunkers.py`, `backend/app/services/chunkers/registry.py` | Public chunker metadata, validation, and lazy callable lookup |
 | Parsing | `backend/app/services/parser.py` | PDF, DOCX, XLSX, PPTX, CSV, HTML, text, URL, and Google Drive parsing |
 | Dense embeddings | `backend/app/services/embedder.py` | Lazy `BAAI/bge-small-en-v1.5` embeddings through FastEmbed |
-| Indexing | `backend/app/services/indexer.py` | Qdrant collection creation, upsert, document delete, collection delete |
+| Indexing | `backend/app/services/indexer.py`, `backend/app/services/chunk_indexing.py` | Legacy/direct Qdrant writes plus deterministic PostgreSQL-Qdrant lineage for durable file ingestion |
 | Retrieval | `backend/app/services/retriever.py`, `backend/app/services/retrieval/*` | Dense/sparse hybrid search, BM25 sparse embeddings, optional reranking |
-| Storage | `backend/app/services/storage.py` | Lazy Cloudflare R2/S3-compatible client for multimodal page images |
+| Realtime and cache | `backend/app/services/event_stream.py`, `backend/app/services/query_cache.py` | Redis-backed ingestion replay/fan-out and best-effort query response caching |
+| Storage | `backend/app/services/bronze_storage.py`, `backend/app/services/pipeline_artifacts.py`, `backend/app/services/storage.py` | MinIO Bronze/Silver/Gold objects and Cloudflare R2 multimodal page images |
 
 ## Repository Structure
 
 ```text
 backend/
+  BACKEND_MAP.md
   Dockerfile
   .dockerignore
   requirements.txt
@@ -103,13 +105,17 @@ backend/
       bronze_storage.py
       airflow.py
       event_stream.py
+      chunk_indexing.py
       query_cache.py
       query_observability.py
       pipeline_status.py
       pipeline_artifacts.py
       ingestion_planner.py
+      control_plane_seed.py
+      control_plane_validation.py
   jobs/
     bronze_to_silver.py
+    control_plane.py
     ingestion_execution.py
     silver_to_gold.py
     upsert_qdrant.py
@@ -126,6 +132,8 @@ backend/
   alembic.ini
   create_tables.py
   reset_dev_db.py
+  seed_control_plane.py
+  validate_control_plane.py
   check_data.py
   cleanup.py
   tests/
@@ -145,7 +153,9 @@ Data-Modeling/
 documents/
   Pdf/
 scripts/
+  e2e_v2.sh
   init_minio.sh
+Makefile
 docker-compose.yml
 test_chunkers.sh
 PROJECT_MAP.md
@@ -310,7 +320,7 @@ The `ragforge_ingestion` DAG now runs `detect_ingestion_technique`, `bronze_to_s
 
 `backend/jobs/ingestion_execution.py` first looks for a profile-specific command such as `RAGFORGE_SILVER_TO_GOLD_EMBEDDING_AWARE_CMD`, then falls back to `RAGFORGE_SILVER_TO_GOLD_CMD` for backward compatibility. It exports the selected plan to worker processes as `RAGFORGE_INGESTION_PROFILE`, `RAGFORGE_INGESTION_TECHNIQUE`, `RAGFORGE_INGESTION_RESOURCE_CLASS`, `RAGFORGE_EMBEDDING_BATCH_SIZE`, and `RAGFORGE_INGESTION_MAX_PARALLELISM`.
 
-The built-in Gold transformation consumes the planned embedding batch size instead of embedding every chunk at once. Late chunking also preserves its context-aware dense vectors in Silver Parquet and reuses them in Gold, avoiding a second, less contextual embedding pass. Other techniques leave `precomputed_dense_vector` empty and use the normal batched embedder.
+The built-in Gold transformation consumes the planned embedding batch size instead of embedding every chunk at once. The `late_chunking` implementation preserves its normalized mean-pooled sentence vectors in Silver Parquet and reuses them in Gold, avoiding a second embedding pass. These are pooled independent sentence embeddings, not token-level vectors from one full-document contextual encoding. Other techniques leave `precomputed_dense_vector` empty and use the normal batched embedder.
 
 Qdrant only accepts unsigned integers or UUIDs as point IDs. RAGForge therefore preserves the readable `{document_version_id}:{chunk_index}` key as `lineage_id` in every payload and derives the actual Qdrant/PostgreSQL `qdrant_point_id` deterministically with UUIDv5. Replaying the same Gold artifact produces the same chunk and point IDs; old points for that document version are removed before the rebuilt set is upserted.
 
@@ -344,7 +354,9 @@ New code can also import from `app.models`.
 
 ## API Surface
 
-| Area | Endpoint |
+Registration, login, the health check, and the chunker catalog are unauthenticated. Other user-facing routes expect a FastAPI bearer JWT; the frontend supplies it through its same-origin HttpOnly-cookie proxy. Internal pipeline routes use a separate bearer service token.
+
+| Area | Endpoints |
 |---|---|
 | Health | `GET /health` |
 | Auth | `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `PATCH /auth/me`, `DELETE /auth/me` |
@@ -352,11 +364,38 @@ New code can also import from `app.models`.
 | Projects | `POST /projects/`, `GET /projects/`, `GET /projects/{project_id}`, `PATCH /projects/{project_id}`, `DELETE /projects/{project_id}` |
 | Documents | `GET /documents/?project_id=...`, `GET /documents/{document_id}`, `GET /documents/{document_id}/versions`, `DELETE /documents/{document_id}` |
 | Chunkers | `GET /chunkers` |
-| Ingest | `POST /ingest/file` (HTTP 202 Bronze landing), `GET /ingest/runs/{ingestion_run_id}`, `GET /ingest/runs/{ingestion_run_id}/events` (SSE), `POST /ingest/url`, `POST /ingest/gdrive`, `POST /ingest/multimodal` |
-| Query | `POST /rag/query`, `POST /rag/query/stream` (SSE), `POST /rag/multimodal-query` |
-| Pipeline internal | `GET/PATCH /internal/pipeline/ingestion-runs/{ingestion_run_id}` and `POST /internal/pipeline/ingestion-runs/{ingestion_run_id}/chunks/index` with service token |
+| Ingestion | `POST /ingest/file` (HTTP 202), `GET /ingest/runs?project_id=...`, `GET /ingest/runs/{id}`, `POST /ingest/runs/{id}/retry`, `GET /ingest/runs/{id}/events` (SSE), `POST /ingest/url`, `POST /ingest/gdrive`, `POST /ingest/multimodal` |
+| Query | `POST /rag/query`, `POST /rag/query/stream` (SSE), `POST /rag/multimodal-query`, `GET /rag/projects/{project_id}/history`, `GET /rag/queries/{query_log_id}` |
+| Pipeline internal | `GET/PATCH /internal/pipeline/ingestion-runs/{id}`, `POST /internal/pipeline/ingestion-runs/{id}/chunks/index` |
 
-`DocumentVersion` is intentionally exposed through `GET /documents/{document_id}/versions`, not as a separate top-level `/document-versions` router. That keeps versions scoped under their parent document and enforces document ownership before listing version metadata.
+### Backend capability boundaries
+
+| Domain | Supported | Not currently supported |
+|---|---|---|
+| Projects | Create, owner-scoped list/read, rename, soft delete, stable UUID collection name | Description, default chunker, advanced project settings, status/count/activity aggregates |
+| Documents | Project list, read, version list, soft delete, new version through re-upload | Update metadata, read one version by ID, rollback, delete one version, direct chunk editing |
+| Ingestion runs | Project list, read, failed-run retry, SSE snapshot/replay/recovery | Cancel endpoint, retry history, per-stage duration/timestamp records, structured diagnostics |
+| Queries | Synchronous/streaming answer, document filter, provider/model choice, history, ranked trace | Regenerate endpoint, feedback endpoint, structured citations in the answer response |
+| Organizations | Authenticated create/list/read/rename/soft delete | Membership roles, admin authorization, per-user organization scoping |
+
+Project tenancy is enforced by `Project.created_by`, not by organization membership. Organization endpoints currently expose every non-deleted organization to any authenticated user. A project create/update payload only supports `name` plus optional `organization_id` on create.
+
+`DocumentVersion` is exposed only through `GET /documents/{document_id}/versions`. Query responses return `query_log_id` and optionally bare `retrieved_chunks`; linked document/version/rank/score details require the follow-up query-trace endpoint. Fully linked traces are available only for points that have PostgreSQL `Chunk` lineage.
+
+### Lifecycle contract
+
+```text
+Document:
+uploaded | landed | processing | chunked | embedded | indexed | failed | deleted
+
+IngestionRun:
+landed -> queued -> running -> silver_completed -> gold_completed -> indexed
+any non-terminal stage -> failed | cancelled
+```
+
+Only failed runs can be retried. Retry resets the run to `queued`, clears its timing/error/Airflow ID and Silver/Gold paths, and returns the document/version to `landed`.
+
+The public run response exposes four coarse progress booleans (`bronze`, `silver`, `gold`, `qdrant`) plus run-level timestamps and error text. Redis/SSE maps the six forward statuses to ordered progress events and also emits terminal failure/cancellation events. PostgreSQL does not currently store nine separate pipeline-stage records.
 
 ## Docker And Local Services
 
@@ -370,6 +409,7 @@ Default `docker compose up -d --build` services:
 | `minio-init` | Creates local buckets through `scripts/init_minio.sh` |
 | `redis` | Best-effort query cache plus short-lived ingestion event replay/fan-out |
 | `fastapi` | Backend app built from `backend/Dockerfile` |
+| `frontend` | Next.js control-plane UI and authenticated same-origin proxy |
 
 The FastAPI container uses `/app` as its working directory, mounts `./backend:/app` for development reloads, installs `backend/requirements.txt`, and starts with:
 
@@ -379,13 +419,15 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 Batch profile services, enabled with `--profile batch`, add the Airflow 3.3 API server/new UI, scheduler, standalone DAG processor, triggerer, metadata database, and Spark. They use the custom `backend/airflow/Dockerfile`, which adds the parser, PyArrow, FastEmbed, and MinIO dependencies used by Task 25. The local stack keeps `LocalExecutor`; the new UI does not require the heavier Celery worker topology.
 
+The built-in Bronze-to-Silver job is Python/PyArrow, not Spark. The Compose Spark service is available to profile-specific external commands but is not used by the default in-repository job. Migrations are not run by FastAPI startup or the image entry point; deployments must run Alembic separately. `GET /health` is process-only and does not probe PostgreSQL, Qdrant, MinIO, Redis, or Airflow.
+
 ## Requirements Strategy
 
 `backend/requirements.txt` is intentionally a slim default runtime set. It includes FastAPI, SQLAlchemy/asyncpg, Qdrant, FastEmbed, the async Redis client, document parsers, auth, OpenAI/Groq clients, and S3/R2 support.
 
 It intentionally does not include older full frozen-environment dependencies or heavy optional stacks such as PyTorch/CUDA wheels, `sentence-transformers`, `transformers`, `colpali_engine`, LangChain, and evaluation/training packages.
 
-Optional multimodal ColPali and CrossEncoder reranking should be added through a separate image, profile, or extras file if they are needed.
+Optional ColQwen2/`colpali_engine` multimodal support and CrossEncoder reranking should be added through a separate image, profile, or extras file if they are needed.
 
 ## File Ingestion Flow
 
@@ -398,10 +440,12 @@ Optional multimodal ColPali and CrossEncoder reranking should be added through a
 7. When `AIRFLOW_API_URL` is configured, a post-response task triggers `ragforge_ingestion` and records its DAG-run ID/status as `queued`.
 8. Airflow fetches the run metadata and detects the ingestion technique from the persisted chunker/source, producing a deterministic execution profile.
 9. Profile-specific commands are used when configured; otherwise the generic Bronze/Silver/Gold/Qdrant commands remain the fallback.
-10. Airflow parses/chunks Bronze into Silver Parquet, embeds Silver in planner-sized batches into Gold Parquet, and indexes Gold through the internal Qdrant boundary. Late chunking reuses vectors computed during chunk boundary detection.
+10. Airflow parses/chunks Bronze into Silver Parquet, embeds Silver in planner-sized batches into Gold Parquet, and indexes Gold through the internal Qdrant boundary. Pooled Sentence Chunking reuses vectors computed during chunk construction.
 11. PostgreSQL advances at `running`, `silver_completed`, `gold_completed`, and `indexed` only after each data-plane boundary succeeds; failures durably store their command error.
 
-URL, Google Drive, and optional multimodal endpoints retain their existing synchronous implementation for now. Heavy operations on those paths remain offloaded with `asyncio.to_thread` where applicable.
+URL and Google Drive ingestion fetch, parse, chunk, embed, and index inside the request, then create an already-indexed version. They do not create `IngestionRun` or PostgreSQL `Chunk` rows, so their retrieval logs cannot resolve complete chunk/document/version lineage. Their version path fields are metadata placeholders rather than written Bronze/Silver/Gold artifacts.
+
+Multimodal ingestion is also synchronous. It renders a bounded PDF into page images, creates ColQwen2 multi-vectors, uploads images to R2, and writes a separate `<project_collection>_multimodal` collection. It creates an indexed version but no ingestion run or PostgreSQL chunks.
 
 ## Document Versioning
 
@@ -412,6 +456,7 @@ Document versioning is currently metadata-first:
 - Re-uploading identical content for the same document returns `409`.
 - `Document.current_version_id` points to the latest successful version.
 - Version rows store lineage paths for bronze/silver/gold artifacts, parser, chunker, embedding model, status, and errors.
+- Only durable file ingestion guarantees that the stored artifact paths correspond to objects written in MinIO.
 
 The API currently lists versions with:
 
@@ -429,16 +474,18 @@ Public chunkers:
 
 | ID | Product Name | Tier | Status | Runtime Notes |
 |---|---|---|---|---|
-| `fixed_size` | Starter Chunking | base | stable | Lightweight text split |
-| `paragraph` | Base Chunking | base | stable | Default text chunker |
-| `sentence` | Precision Chunking | pro | stable | Uses NLTK sentence tokenization when data is available |
-| `semantic` | Semantic Chunking | pro | beta | Uses dense embeddings to compare adjacent sentences |
-| `hierarchical` | Structured Chunking | business | beta | Creates parent/child chunks for expanded context |
-| `late_chunking` | Late Interaction Chunking | ultimate | beta | Groups sentence embeddings and stores pooled vectors |
+| `fixed_size` | Starter Chunking | base | stable | Bounded character windows with configurable character overlap |
+| `paragraph` | Base Chunking | base | stable | Default; packs paragraphs and splits only oversized paragraphs into overlapping word windows |
+| `sentence` | Precision Chunking | pro | stable | Sentence-aligned groups; merges short fragments; NLTK with regex fallback |
+| `semantic` | Semantic Chunking | pro | beta | Splits on adjacent-sentence embedding similarity; no overlap |
+| `hierarchical` | Structured Chunking | business | beta | Deterministic sentence-count parent/child groups; not heading/layout aware |
+| `late_chunking` | Pooled Sentence Chunking | ultimate | beta | Mean-pools independent sentence embeddings; not token-level full-document late chunking |
 | `proposition` | Ultimate Chunking | ultimate | beta | Uses Groq when `GROQ_API_KEY` is configured, falls back per paragraph on errors |
-| `multimodal` | Multimodal Chunking | ultimate | experimental | Optional heavy path; requires ColPali/ColQwen dependencies not in default requirements |
+| `multimodal` | Multimodal Chunking | ultimate | experimental | PDF page rendering and ColQwen2 multi-vectors; requires the optional heavy runtime and R2 |
 
 `registry.py` uses lazy callable paths so listing metadata does not import heavy chunker implementations. Text ingestion rejects `multimodal`; that mode belongs to `/ingest/multimodal`.
+
+The detailed implementation-level capability map lives in `backend/app/services/chunkers/chuncker_map.md`.
 
 ## Retrieval And Generation
 
@@ -460,6 +507,10 @@ question
 
 Redis cache failures degrade to a normal retrieval/generation request. Cache
 state is recorded in PostgreSQL, which remains the durable source of truth.
+Cache keys include the project, normalized question, provider/model, optional
+document filter, and parent-context flag. They do not include an index/version
+generation, and ingestion/deletion does not invalidate cache entries; freshness
+therefore depends on `QUERY_CACHE_TTL_SECONDS`.
 
 Task 23 uses Redis Streams only as a short replay/fan-out layer. Every ingestion
 subscription begins with the current PostgreSQL snapshot, accepts
@@ -467,6 +518,11 @@ subscription begins with the current PostgreSQL snapshot, accepts
 to durable polling when Redis is unavailable. Streaming queries run in an
 independent database session so client disconnects do not cancel query and
 retrieval logging.
+
+Query streaming uses an in-process queue and is not replayable. It emits
+received, embedding, retrieving, reranking, generation, token, completion, and
+failure events. The worker retains its own database session so browser
+disconnects do not cancel provider work or durable logging.
 
 Optional query controls:
 
@@ -489,7 +545,7 @@ question
   -> Gemini vision response
 ```
 
-The multimodal flow requires the optional ColPali/ColQwen stack and R2/S3 settings. Those packages are not part of the slim default Docker image.
+The multimodal flow requires the optional ColQwen2/`colpali_engine` stack and R2/S3 settings. Those packages are not part of the slim default Docker image.
 
 ## Configuration
 
@@ -499,6 +555,9 @@ Core settings:
 - `SECRET_KEY`
 - `QDRANT_URL`
 - `QDRANT_API_KEY`
+- `EMBEDDING_BACKEND` (`fastembed` by default; `deterministic` for offline tests)
+- `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`
+- `MINIO_BUCKET_BRONZE`, `MINIO_BUCKET_SILVER`, `MINIO_BUCKET_GOLD`
 - `REDIS_URL`
 - `QUERY_CACHE_TTL_SECONDS`
 - `MAX_UPLOAD_BYTES`
@@ -508,7 +567,7 @@ Core settings:
 - `EVENT_STREAM_TTL_SECONDS`
 - `SSE_HEARTBEAT_SECONDS`
 - `SSE_POLL_SECONDS`
-- `AIRFLOW_API_URL`, `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`, `AIRFLOW_DAG_ID` for optional DAG submission from FastAPI
+- `AIRFLOW_API_URL`, `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`, `AIRFLOW_INGESTION_DAG_ID` for optional DAG submission from FastAPI
 - `PIPELINE_SERVICE_TOKEN` for Airflow-to-FastAPI internal pipeline calls
 - `RAGFORGE_BRONZE_TO_SILVER_CMD`, `RAGFORGE_SILVER_TO_GOLD_CMD`, `RAGFORGE_UPSERT_QDRANT_CMD` for generic pipeline jobs
 - `RAGFORGE_<STAGE>_<PROFILE>_CMD` for optional profile-specific worker backends, where the profile suffix is `THROUGHPUT`, `STRUCTURED`, `EMBEDDING_AWARE`, `LLM_ENRICHED`, or `MULTIMODAL`
@@ -517,14 +576,16 @@ Optional provider settings:
 
 - `GEMINI_API_KEY` for Gemini queries.
 - `GROQ_API_KEY` for Groq queries and proposition chunking.
+- `GEMINI_BASE_URL`, `GROQ_BASE_URL`, `LLM_MAX_RETRIES`, `LLM_TIMEOUT_SECONDS` for OpenAI-compatible provider clients.
 - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_URL` for multimodal page image storage.
 
-Docker Compose passes most runtime settings from the shell environment and hardcodes service URLs for local containers. `SECRET_KEY` is required by `Settings` and must be provided through local environment or an env file before the FastAPI container can start successfully.
+`DATABASE_URL`, `SECRET_KEY`, and `QDRANT_URL` are required at settings import time. Docker Compose passes most runtime settings from the shell environment and hardcodes service URLs for local containers.
 
 ## Development Utilities
 
 | File | Purpose |
 |---|---|
+| `backend/BACKEND_MAP.md` | Detailed code-level backend request, storage, lifecycle, and ownership map |
 | `backend/Dockerfile` | Builds the default FastAPI runtime image from slim requirements |
 | `backend/.dockerignore` | Prevents local `.venv`, caches, `.env`, and Airflow logs from entering the image |
 | `backend/requirements.txt` | Slim runtime dependency list for default backend |
@@ -541,12 +602,19 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 | `test_chunkers.sh` | End-to-end smoke test using `Rapport_de_stage_bac+3.pdf` |
 | `backend/tests/test_chunker_registry.py` | Registry metadata and lightweight import tests |
 | `backend/tests/test_chunkers_api.py` | `/chunkers` and invalid chunker API tests when FastAPI is installed |
+| `backend/tests/test_auth_validation.py` | Registration/profile validation and organization-reference checks |
+| `backend/tests/test_frontend_control_plane_api.py` | Frontend-facing organization, project, and document API behavior |
+| `backend/tests/test_embedding_backends.py` | FastEmbed selection and deterministic offline embedding behavior |
 | `backend/tests/test_control_plane_models.py` | Tasks 4–11 table, foreign-key, status, uniqueness, and composite-index tests |
 | `backend/tests/test_control_plane_database.py` | Tasks 21–22 isolated PostgreSQL seed, constraint, relationship, lifecycle, schema, and migration tests |
+| `backend/tests/test_control_plane_runtime.py` | Repository transitions, retry/recovery, seeding, and schema-validation behavior |
 | `backend/tests/test_realtime_streaming.py` | Task 23 SSE, replay, fallback, ownership, token, disconnect, heartbeat, and optional live Redis tests |
 | `backend/tests/test_pipeline_artifacts.py` | Task 25 deterministic Silver/Gold Parquet, retry, empty input, and embedding mismatch tests |
 | `backend/tests/test_ingestion_planner.py` | Adaptive technique classification, profiles, resource classes, batch sizes, and concurrency hints |
 | `backend/tests/test_ingestion_execution.py` | Profile-specific command selection, generic fallback, and worker environment propagation |
+| `backend/tests/test_airflow_service.py` | Airflow REST authentication, DAG trigger, and durable run-ID handling |
+| `backend/tests/test_qdrant_chunk_lineage.py` | Deterministic point/chunk identity and idempotent version indexing |
+| `backend/tests/test_rag_observability.py` | Query/retrieval logging, Redis cache behavior, and structured retrieval hits |
 | `backend/tests/e2e/test_control_plane.py` | Task 26 containerized upload-to-answer, lineage, Redis recovery, failure, and tenant-isolation tests |
 | `scripts/e2e_v2.sh` | Isolated one-command Task 26 Compose orchestrator |
 | `frontend/src/**/*.test.tsx` | Task 27 loading, empty, success, failure, SSE parsing, and reconnect tests |
@@ -562,9 +630,14 @@ Docker Compose passes most runtime settings from the shell environment and hardc
 - The text ingestion endpoint rejects the `multimodal` chunker because multimodal has its own endpoint.
 - Adaptive plans are execution hints, not a scheduler by themselves. The generic commands work unchanged; profile-specific command variables can route work to optimized CPU, high-memory, network-bound, or GPU backends.
 - The planner is derived from durable chunker/source metadata and adds no control-plane table or migration.
-- Late chunking vectors cross the Silver/Gold boundary as `precomputed_dense_vector`; other chunkers are embedded in batches selected by the planner.
+- Pooled-sentence (`late_chunking`) vectors cross the Silver/Gold boundary as `precomputed_dense_vector`; other chunkers are embedded in batches selected by the planner.
 - The registry is built for SaaS frontend display and does not expose callable paths publicly.
 - The default Docker image is intentionally text-RAG focused; optional multimodal and CrossEncoder rerank dependencies should be isolated.
+- `EmbeddingRun` has a model and repository but the active API/Airflow pipeline does not create or update embedding-run records.
+- Document deletion removes base-collection text points and R2 images, but it does not explicitly remove that document's points from the multimodal collection. Project deletion removes both entire collections.
+- Qdrant and PostgreSQL writes are not atomic. Deterministic IDs and version replacement make retry/rebuild the recovery path.
+- Airflow triggering is optional and best-effort. Without `AIRFLOW_API_URL`, a file upload remains `landed`; there is no inline pipeline fallback.
+- `app/main.py` has no CORS middleware or startup dependency checks.
 - The frontend uses a same-origin Next.js proxy so JWTs remain in HttpOnly
   cookies while authenticated POST and GET SSE streams retain header-based
   FastAPI authorization.
