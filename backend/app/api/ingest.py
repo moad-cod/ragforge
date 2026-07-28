@@ -25,7 +25,6 @@ from app.services.chunkers import late_chunking as late_chunking_module
 from app.services.chunkers import hierarchical as hierarchical_module
 from app.core.config import settings
 from app.services.storage import delete_document_images
-from app.services.airflow import enqueue_ingestion
 from app.services.bronze_storage import delete_raw_file, upload_raw_file
 from app.services.event_stream import (
     INGESTION_SEQUENCE,
@@ -36,6 +35,10 @@ from app.services.event_stream import (
     heartbeat_sse,
     publish_ingestion_event,
     replay_ingestion_events,
+)
+from app.services.ingestion_orchestrator import (
+    enqueue_ingestion,
+    ingestion_orchestration_enabled,
 )
 import asyncio
 import hashlib
@@ -531,7 +534,7 @@ async def upload_file(
         data={"document_id": doc.id, "document_version_id": version.id},
     )
 
-    if settings.AIRFLOW_API_URL:
+    if ingestion_orchestration_enabled():
         background_tasks.add_task(enqueue_ingestion, run.id)
 
     return {
@@ -614,7 +617,7 @@ async def retry_ingestion_run(
         "queued",
         data={"document_id": run.document_id, "document_version_id": run.document_version_id},
     )
-    if settings.AIRFLOW_API_URL:
+    if ingestion_orchestration_enabled():
         background_tasks.add_task(enqueue_ingestion, run.id)
     return _ingestion_run_payload(run, version)
 
