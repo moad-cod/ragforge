@@ -43,6 +43,16 @@ class Settings(BaseSettings):
     AIRFLOW_INGESTION_DAG_ID: str = "ragforge_ingestion"
     PIPELINE_SERVICE_TOKEN: str = ""
 
+    # Ingestion orchestration. Airflow remains the default for compatibility;
+    # Celery can be selected in the comparison branch with ORCHESTRATOR=celery.
+    ORCHESTRATOR: str = "airflow"
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
+    CELERY_TASK_ALWAYS_EAGER: bool = False
+    CELERY_WORKER_PREFETCH_MULTIPLIER: int = 1
+    CELERY_TASK_RETRY_DELAY_SECONDS: int = 10
+    CELERY_TASK_MAX_RETRIES: int = 2
+
     DEBUG_RETURN_CONTEXT: bool = False
     MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024
     MAX_MULTIMODAL_PAGES: int = 50
