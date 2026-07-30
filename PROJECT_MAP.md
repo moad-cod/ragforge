@@ -2,7 +2,7 @@
 
 RAGForge is a FastAPI SaaS backend for authenticated Retrieval-Augmented Generation. It ingests files and web sources, versions document content, chunks and embeds text, stores dense and sparse vectors in Qdrant, and answers questions through OpenAI-compatible LLM providers. PostgreSQL defines the durable control plane for identities, projects, ingestion runs, chunk lineage, embedding runs, query history, and retrieval traces.
 
-The most complete path is asynchronous file ingestion through MinIO and Airflow. URL, Google Drive, and multimodal ingestion are still synchronous paths and do not create the same run/artifact/chunk lineage. The default backend is optimized for text RAG; ColQwen2 multimodal ingestion and CrossEncoder reranking are kept out of the default requirements.
+The most complete path is asynchronous file ingestion through MinIO and a selectable orchestrator: Airflow or Celery. URL, Google Drive, and multimodal ingestion are still synchronous paths and do not create the same run/artifact/chunk lineage. The default backend is optimized for text RAG; ColQwen2 multimodal ingestion and CrossEncoder reranking are kept out of the default requirements.
 
 ## Architecture
 
@@ -13,7 +13,8 @@ Next.js control-plane UI / Swagger UI
   -> Auth / Organizations / Projects / Documents / Chunkers / Ingest / Query
   -> SQLAlchemy async + PostgreSQL control-plane metadata
   -> Durable file landing + adaptive ingestion planner
-  -> Airflow profile-aware Bronze -> Silver -> Gold orchestration
+  -> Orchestrator boundary selects Airflow DAG or Celery chain
+  -> Bronze -> Silver -> Gold -> Qdrant durable ingestion stages
   -> Parser + chunker registry + embedding services
   -> FastEmbed dense BGE vectors + FastEmbed BM25 sparse vectors
   -> Qdrant dense+sparse vector collections
@@ -37,9 +38,11 @@ Next.js control-plane UI / Swagger UI
 | Projects | `backend/app/api/projects.py` | Project CRUD, ownership checks, Qdrant collection lifecycle |
 | Documents | `backend/app/api/documents.py` | Document list/get/delete and document version listing |
 | Ingestion | `backend/app/api/ingest.py` | File, URL, Google Drive, and optional multimodal ingestion |
-| Pipeline control | `backend/app/api/internal_pipeline.py`, `backend/app/services/ingestion_planner.py` | Authenticated run metadata/status boundary and deterministic technique-to-execution planning |
-| Batch artifacts | `backend/app/services/pipeline_artifacts.py`, `backend/jobs/*.py` | Bronze parsing/chunking, Silver/Gold Parquet, adaptive embedding batches, and Qdrant indexing |
+| Pipeline control | `backend/app/api/internal_pipeline.py`, `backend/app/services/ingestion_orchestrator.py`, `backend/app/services/ingestion_planner.py` | Authenticated run metadata/status boundary, Airflow/Celery selection, and deterministic technique-to-execution planning |
+| Batch artifacts | `backend/app/services/pipeline_artifacts.py`, `backend/jobs/*.py` | Bronze parsing/chunking, shared stage functions, Silver/Gold Parquet, adaptive embedding batches, and Qdrant indexing |
 | Airflow execution | `backend/airflow/dags/ragforge_ingestion.py`, `backend/jobs/ingestion_execution.py` | Detects the selected chunking technique, chooses profile-aware commands, and exports resource hints |
+| Celery execution | `backend/app/services/celery_app.py`, `backend/app/services/celery_ingestion.py`, `backend/worker.py` | Configures the Celery app, publishes the ingestion chain, retries failed stages, and exposes the worker entry point |
+| Benchmarks | `backend/evaluation/airflow_benchmark/*`, `backend/evaluation/celery_benchmark/*` | Matched orchestration benchmark CLIs, clients, workloads, validators, metrics, and report writers |
 | Query | `backend/app/api/query.py` | Text and multimodal queries, query SSE, history, and retrieval trace responses |
 | Chunker catalog | `backend/app/api/chunkers.py`, `backend/app/services/chunkers/registry.py` | Public chunker metadata, validation, and lazy callable lookup |
 | Parsing | `backend/app/services/parser.py` | PDF, DOCX, XLSX, PPTX, CSV, HTML, text, URL, and Google Drive parsing |
@@ -104,6 +107,9 @@ backend/
       storage.py
       bronze_storage.py
       airflow.py
+      celery_app.py
+      celery_ingestion.py
+      ingestion_orchestrator.py
       event_stream.py
       chunk_indexing.py
       query_cache.py
@@ -117,6 +123,7 @@ backend/
     bronze_to_silver.py
     control_plane.py
     ingestion_execution.py
+    ingestion_workflow.py
     silver_to_gold.py
     upsert_qdrant.py
   alembic/
@@ -129,6 +136,10 @@ backend/
     pipeline-requirements.txt
     dags/ragforge_ingestion.py
     plugins/ragforge_control_plane.py
+  evaluation/
+    airflow_benchmark/
+    celery_benchmark/
+  worker.py
   alembic.ini
   create_tables.py
   reset_dev_db.py
@@ -200,6 +211,7 @@ DocumentVersion
 IngestionRun
   id, project_id, document_id, document_version_id, status
   started_at, finished_at, error_message, airflow_dag_run_id
+  airflow_dag_run_id is currently a legacy orchestration-id field used by both Airflow and Celery
   created_by, created_at
   belongs to Project, Document, DocumentVersion, and creator User
 
@@ -251,7 +263,8 @@ PostgreSQL: identities, paths, statuses, run history, chunk/query/retrieval meta
 MinIO:      Bronze raw objects, Silver chunk Parquet, Gold embedded metadata Parquet
 Qdrant:     dense and sparse vectors (PostgreSQL stores qdrant_point_id only)
 Redis:      temporary cache, session, progress, and rate-limit state
-Airflow:    pipeline scheduling; ingestion_runs.airflow_dag_run_id provides traceability
+Airflow:    optional DAG scheduling; ingestion_runs.airflow_dag_run_id provides traceability
+Celery:     optional chain/work queue; currently reuses ingestion_runs.airflow_dag_run_id for workflow traceability
 ```
 
 Status validation is enforced twice: SQLAlchemy rejects invalid values before persistence, and PostgreSQL check constraints protect writes from any other client. Canonical values live in `backend/app/models/statuses.py`.
@@ -269,6 +282,7 @@ database validation, and authenticated real-time delivery:
 | 15 | `POST /ingest/file` lands raw bytes in MinIO Bronze and returns an ingestion run with HTTP 202 |
 | 16 | `GET /ingest/runs/{ingestion_run_id}` reports durable status and Bronze/Silver/Gold/Qdrant progress |
 | 17 | Authenticated internal pipeline API, optional Airflow REST enqueue, Airflow client plugin, and ingestion DAG status boundaries |
+| 17C | Celery orchestration boundary, Celery worker app, five-task ingestion chain, and matched Celery benchmark package |
 | 18 | Deterministic PostgreSQL/Qdrant chunk lineage, complete tenant/version payloads, idempotent version rebuilds, and an authenticated Gold-chunk indexing boundary |
 | 19 | Normalized question hashing, best-effort Redis response caching, and durable provider/model/latency/cache/route query logs |
 | 20 | Structured retrieval hits and durable rank, Qdrant score, optional rerank score, strategy, chunk lineage, and answer-usage traces |
@@ -281,18 +295,9 @@ database validation, and authenticated real-time delivery:
 
 The repository layer owns reusable database operations and does not commit implicitly. API routes and pipeline boundaries control transactions, allowing multi-row document/version/run creation to remain atomic.
 
-Task 25 replaces the Airflow command placeholders with built-in batch jobs.
-The custom Airflow image reads version metadata through the authenticated
-internal API, transforms MinIO Bronze objects into Silver and Gold Parquet,
-and sends Gold rows through the deterministic Task 18 indexing boundary.
-Artifact keys are version-scoped and overwritten on retry; PostgreSQL paths
-and statuses advance only after the corresponding object write succeeds.
+Task 25 replaces the old orchestration command placeholders with built-in batch jobs and shared stage logic. The Airflow image can run those jobs through configured commands, while the Celery worker calls the shared Python stages directly. Both paths read version metadata through the authenticated internal API, transform MinIO Bronze objects into Silver and Gold Parquet, and send Gold rows through the deterministic Task 18 indexing boundary. Artifact keys are version-scoped and overwritten on retry; PostgreSQL paths and statuses advance only after the corresponding object write succeeds.
 
-Task 26 packages the complete runtime into a repeatable `make e2e-v2` gate. It
-uses a separate Compose project and volumes, alternate host ports, a local
-OpenAI-compatible provider, and deterministic embeddings. Public APIs drive
-the user flows; direct PostgreSQL, MinIO, Airflow, and Qdrant clients are used
-only to assert cross-system counts, paths, timestamps, ranks, and lineage.
+Task 26 packages the Airflow-backed complete runtime into a repeatable `make e2e-v2` gate. It uses a separate Compose project and volumes, alternate host ports, a local OpenAI-compatible provider, and deterministic embeddings. Public APIs drive the user flows; direct PostgreSQL, MinIO, Airflow, and Qdrant clients are used only to assert cross-system counts, paths, timestamps, ranks, and lineage. The Celery branch currently adds focused orchestration tests and a matched Celery benchmark runner rather than a full Celery E2E gate.
 
 Task 27 adds a production-built Next.js service. Authentication is exchanged
 through Next.js route handlers and stored in an HttpOnly cookie; the browser
@@ -302,9 +307,9 @@ multipart uploads, and streaming SSE responses. Ingestion views reconnect with
 also exposes tenant-owned recent runs, safe failed-run retries, query history,
 and ranked chunk/document retrieval traces.
 
-Airflow talks to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally keeps the application database runtime out of Airflow 3.3 task processes. The internal API delegates every write to the same ingestion repository used elsewhere. FastAPI authenticates through Airflow's `/auth/token` endpoint and triggers DAG runs through the Airflow 3 public `/api/v2` API.
+Airflow and Celery talk to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally keeps orchestration workers from owning application database writes directly. The internal API delegates every write to the same ingestion repository used elsewhere. In Airflow mode, FastAPI authenticates through Airflow's `/auth/token` endpoint and triggers DAG runs through the Airflow 3 public `/api/v2` API. In Celery mode, FastAPI publishes a Celery chain through `app/services/celery_ingestion.py`.
 
-The `ragforge_ingestion` DAG now runs `detect_ingestion_technique`, `bronze_to_silver`, `silver_to_gold_embed`, `upsert_qdrant`, and `update_postgres_status`. The first task reads durable run/version/document metadata through the control-plane API, receives an `ingestion_plan`, records the run as `running`, and passes the plan through Airflow task outputs. Transformation commands receive `{ingestion_run_id}`, `{profile}`, `{chunker_id}`, and `{source_type}`. A missing command fails the run instead of falsely advancing its durable status. The Task 18 indexing boundary accepts embedded Gold chunks at `POST /internal/pipeline/ingestion-runs/{id}/chunks/index`, rebuilds that version's Qdrant points, and atomically replaces its PostgreSQL chunk rows.
+The `ragforge_ingestion` DAG runs `detect_ingestion_technique`, `bronze_to_silver`, `silver_to_gold_embed`, `upsert_qdrant`, and `update_postgres_status`. The Celery chain mirrors the same logical boundaries as `detect_ingestion_plan_task`, `bronze_to_silver_task`, `silver_to_gold_task`, `upsert_qdrant_task`, and `finalize_ingestion_task`. The first stage reads durable run/version/document metadata through the control-plane API, receives an `ingestion_plan`, and records the run as `running`. Airflow transformation commands receive `{ingestion_run_id}`, `{profile}`, `{chunker_id}`, and `{source_type}`; Celery tasks call shared Python stage functions in `backend/jobs/ingestion_workflow.py`. The Task 18 indexing boundary accepts embedded Gold chunks at `POST /internal/pipeline/ingestion-runs/{id}/chunks/index`, rebuilds that version's Qdrant points, and atomically replaces its PostgreSQL chunk rows.
 
 ### Adaptive ingestion execution
 
@@ -393,7 +398,7 @@ landed -> queued -> running -> silver_completed -> gold_completed -> indexed
 any non-terminal stage -> failed | cancelled
 ```
 
-Only failed runs can be retried. Retry resets the run to `queued`, clears its timing/error/Airflow ID and Silver/Gold paths, and returns the document/version to `landed`.
+Only failed runs can be retried. Retry resets the run to `queued`, clears its timing/error/orchestration ID and Silver/Gold paths, and returns the document/version to `landed`.
 
 The public run response exposes four coarse progress booleans (`bronze`, `silver`, `gold`, `qdrant`) plus run-level timestamps and error text. Redis/SSE maps the six forward statuses to ordered progress events and also emits terminal failure/cancellation events. PostgreSQL does not currently store nine separate pipeline-stage records.
 
@@ -417,13 +422,15 @@ The FastAPI container uses `/app` as its working directory, mounts `./backend:/a
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Batch profile services, enabled with `--profile batch`, add the Airflow 3.3 API server/new UI, scheduler, standalone DAG processor, triggerer, metadata database, and Spark. They use the custom `backend/airflow/Dockerfile`, which adds the parser, PyArrow, FastEmbed, and MinIO dependencies used by Task 25. The local stack keeps `LocalExecutor`; the new UI does not require the heavier Celery worker topology.
+Airflow profile services, enabled with `--profile airflow`, add the Airflow 3.3 API server/new UI, scheduler, standalone DAG processor, triggerer, metadata database, and Spark. They use the custom `backend/airflow/Dockerfile`, which adds the parser, PyArrow, FastEmbed, and MinIO dependencies used by Task 25. The local stack keeps `LocalExecutor`.
 
-The built-in Bronze-to-Silver job is Python/PyArrow, not Spark. The Compose Spark service is available to profile-specific external commands but is not used by the default in-repository job. Migrations are not run by FastAPI startup or the image entry point; deployments must run Alembic separately. `GET /health` is process-only and does not probe PostgreSQL, Qdrant, MinIO, Redis, or Airflow.
+Celery profile services, enabled with `--profile celery`, add `celery-worker`, which runs `celery -A worker worker --loglevel=INFO` against the same FastAPI, PostgreSQL, MinIO, Qdrant, and Redis services. Use `ORCHESTRATOR=celery` and a shared `PIPELINE_SERVICE_TOKEN` so FastAPI and the worker agree on the internal pipeline token.
+
+The built-in Bronze-to-Silver job is Python/PyArrow, not Spark. The Compose Spark service is available to profile-specific external commands but is not used by the default in-repository job. Migrations are not run by FastAPI startup or the image entry point; deployments must run Alembic separately. `GET /health` is process-only and does not probe PostgreSQL, Qdrant, MinIO, Redis, Airflow, or Celery.
 
 ## Requirements Strategy
 
-`backend/requirements.txt` is intentionally a slim default runtime set. It includes FastAPI, SQLAlchemy/asyncpg, Qdrant, FastEmbed, the async Redis client, document parsers, auth, OpenAI/Groq clients, and S3/R2 support.
+`backend/requirements.txt` is intentionally a slim default runtime set. It includes FastAPI, SQLAlchemy/asyncpg, Qdrant, FastEmbed, Celery, the async Redis client, document parsers, auth, OpenAI/Groq clients, and S3/R2 support.
 
 It intentionally does not include older full frozen-environment dependencies or heavy optional stacks such as PyTorch/CUDA wheels, `sentence-transformers`, `transformers`, `colpali_engine`, LangChain, and evaluation/training packages.
 
@@ -437,11 +444,11 @@ Optional ColQwen2/`colpali_engine` multimodal support and CrossEncoder reranking
 4. Raw bytes are stored under the versioned path in the MinIO `bronze` bucket.
 5. One transaction creates `DocumentVersion(status=landed)` and `IngestionRun(status=landed)`.
 6. The API returns HTTP 202 with document, version, and ingestion-run IDs; it does not parse/embed/index in the request.
-7. When `AIRFLOW_API_URL` is configured, a post-response task triggers `ragforge_ingestion` and records its DAG-run ID/status as `queued`.
-8. Airflow fetches the run metadata and detects the ingestion technique from the persisted chunker/source, producing a deterministic execution profile.
-9. Profile-specific commands are used when configured; otherwise the generic Bronze/Silver/Gold/Qdrant commands remain the fallback.
-10. Airflow parses/chunks Bronze into Silver Parquet, embeds Silver in planner-sized batches into Gold Parquet, and indexes Gold through the internal Qdrant boundary. Pooled Sentence Chunking reuses vectors computed during chunk construction.
-11. PostgreSQL advances at `running`, `silver_completed`, `gold_completed`, and `indexed` only after each data-plane boundary succeeds; failures durably store their command error.
+7. When orchestration is configured, a post-response task calls `backend/app/services/ingestion_orchestrator.py`; `ORCHESTRATOR=airflow` triggers the Airflow DAG, and `ORCHESTRATOR=celery` publishes the Celery chain.
+8. The selected orchestrator fetches run metadata and detects the ingestion technique from the persisted chunker/source, producing a deterministic execution profile.
+9. Airflow can use profile-specific commands when configured; Celery calls the shared stage functions directly.
+10. The selected orchestrator parses/chunks Bronze into Silver Parquet, embeds Silver in planner-sized batches into Gold Parquet, and indexes Gold through the internal Qdrant boundary. Pooled Sentence Chunking reuses vectors computed during chunk construction.
+11. PostgreSQL advances at `running`, `silver_completed`, `gold_completed`, and `indexed` only after each data-plane boundary succeeds; failures durably store their error.
 
 URL and Google Drive ingestion fetch, parse, chunk, embed, and index inside the request, then create an already-indexed version. They do not create `IngestionRun` or PostgreSQL `Chunk` rows, so their retrieval logs cannot resolve complete chunk/document/version lineage. Their version path fields are metadata placeholders rather than written Bronze/Silver/Gold artifacts.
 
@@ -567,10 +574,12 @@ Core settings:
 - `EVENT_STREAM_TTL_SECONDS`
 - `SSE_HEARTBEAT_SECONDS`
 - `SSE_POLL_SECONDS`
+- `ORCHESTRATOR` selects `airflow` or `celery` for durable file ingestion
 - `AIRFLOW_API_URL`, `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`, `AIRFLOW_INGESTION_DAG_ID` for optional DAG submission from FastAPI
-- `PIPELINE_SERVICE_TOKEN` for Airflow-to-FastAPI internal pipeline calls
+- `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CELERY_TASK_ALWAYS_EAGER`, `CELERY_WORKER_PREFETCH_MULTIPLIER`, `CELERY_TASK_RETRY_DELAY_SECONDS`, `CELERY_TASK_MAX_RETRIES` for Celery workers
+- `PIPELINE_SERVICE_TOKEN` for Airflow/Celery-to-FastAPI internal pipeline calls
 - `RAGFORGE_BRONZE_TO_SILVER_CMD`, `RAGFORGE_SILVER_TO_GOLD_CMD`, `RAGFORGE_UPSERT_QDRANT_CMD` for generic pipeline jobs
-- `RAGFORGE_<STAGE>_<PROFILE>_CMD` for optional profile-specific worker backends, where the profile suffix is `THROUGHPUT`, `STRUCTURED`, `EMBEDDING_AWARE`, `LLM_ENRICHED`, or `MULTIMODAL`
+- `RAGFORGE_<STAGE>_<PROFILE>_CMD` for optional Airflow profile-specific worker backends, where the profile suffix is `THROUGHPUT`, `STRUCTURED`, `EMBEDDING_AWARE`, `LLM_ENRICHED`, or `MULTIMODAL`
 
 Optional provider settings:
 
@@ -588,9 +597,9 @@ Optional provider settings:
 | `backend/BACKEND_MAP.md` | Detailed code-level backend request, storage, lifecycle, and ownership map |
 | `backend/Dockerfile` | Builds the default FastAPI runtime image from slim requirements |
 | `backend/.dockerignore` | Prevents local `.venv`, caches, `.env`, and Airflow logs from entering the image |
-| `backend/requirements.txt` | Slim runtime dependency list for default backend |
+| `backend/requirements.txt` | Slim runtime dependency list for default backend, including Celery |
 | `frontend/Dockerfile` | Builds the standalone Next.js control-plane image |
-| `docker-compose.yml` | Starts Next.js, Postgres, Qdrant, MinIO, Redis, FastAPI, and optional batch profile |
+| `docker-compose.yml` | Starts Next.js, Postgres, Qdrant, MinIO, Redis, FastAPI, and optional `airflow` / `celery` profiles |
 | `scripts/init_minio.sh` | Creates local MinIO buckets |
 | `backend/alembic.ini`, `backend/alembic/` | Reversible production schema migration and autogenerate metadata integration |
 | `backend/create_tables.py` | Legacy/development helper for creating missing tables directly from metadata |
@@ -613,13 +622,18 @@ Optional provider settings:
 | `backend/tests/test_ingestion_planner.py` | Adaptive technique classification, profiles, resource classes, batch sizes, and concurrency hints |
 | `backend/tests/test_ingestion_execution.py` | Profile-specific command selection, generic fallback, and worker environment propagation |
 | `backend/tests/test_airflow_service.py` | Airflow REST authentication, DAG trigger, and durable run-ID handling |
+| `backend/tests/test_celery_orchestration.py` | Orchestrator selection, Celery enqueue behavior, shared stage transitions, and worker entry-point loading |
+| `backend/tests/test_airflow_benchmark.py` | Airflow benchmark workload, validation, metric, and timestamp handling tests |
+| `backend/tests/test_celery_benchmark.py` | Celery benchmark workload, validation, metric, and timestamp handling tests |
 | `backend/tests/test_qdrant_chunk_lineage.py` | Deterministic point/chunk identity and idempotent version indexing |
 | `backend/tests/test_rag_observability.py` | Query/retrieval logging, Redis cache behavior, and structured retrieval hits |
-| `backend/tests/e2e/test_control_plane.py` | Task 26 containerized upload-to-answer, lineage, Redis recovery, failure, and tenant-isolation tests |
+| `backend/tests/e2e/test_control_plane.py` | Task 26 Airflow-backed containerized upload-to-answer, lineage, Redis recovery, failure, and tenant-isolation tests |
 | `scripts/e2e_v2.sh` | Isolated one-command Task 26 Compose orchestrator |
 | `frontend/src/**/*.test.tsx` | Task 27 loading, empty, success, failure, SSE parsing, and reconnect tests |
 | `.github/workflows/frontend.yml` | Frontend lint, test, and production-build gate |
 | `backend/tests/evaluate.py` | Evaluation helper for local experiments |
+| `backend/evaluation/airflow_benchmark/` | Airflow benchmark CLI and report package |
+| `backend/evaluation/celery_benchmark/` | Celery benchmark CLI and report package |
 
 ## Current Design Notes
 
@@ -633,10 +647,12 @@ Optional provider settings:
 - Pooled-sentence (`late_chunking`) vectors cross the Silver/Gold boundary as `precomputed_dense_vector`; other chunkers are embedded in batches selected by the planner.
 - The registry is built for SaaS frontend display and does not expose callable paths publicly.
 - The default Docker image is intentionally text-RAG focused; optional multimodal and CrossEncoder rerank dependencies should be isolated.
-- `EmbeddingRun` has a model and repository but the active API/Airflow pipeline does not create or update embedding-run records.
+- `EmbeddingRun` has a model and repository but the active API/orchestrator pipeline does not create or update embedding-run records.
 - Document deletion removes base-collection text points and R2 images, but it does not explicitly remove that document's points from the multimodal collection. Project deletion removes both entire collections.
 - Qdrant and PostgreSQL writes are not atomic. Deterministic IDs and version replacement make retry/rebuild the recovery path.
-- Airflow triggering is optional and best-effort. Without `AIRFLOW_API_URL`, a file upload remains `landed`; there is no inline pipeline fallback.
+- Orchestrator triggering is optional and best-effort. Without a configured selected orchestrator, a file upload remains `landed`; there is no inline pipeline fallback.
+- Celery currently reuses the existing `ingestion_runs.airflow_dag_run_id` column for workflow IDs to avoid schema churn during comparison.
+- The containerized E2E suite is still Airflow-oriented; Celery currently has focused unit tests and benchmark validation.
 - `app/main.py` has no CORS middleware or startup dependency checks.
 - The frontend uses a same-origin Next.js proxy so JWTs remain in HttpOnly
   cookies while authenticated POST and GET SSE streams retain header-based
