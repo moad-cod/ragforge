@@ -2,14 +2,23 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, Mock, patch
 
 from evaluation.airflow_benchmark.metrics import distribution, percentile, summarize_runs
-from evaluation.airflow_benchmark.models import RunMeasurement, ValidationResult, WorkloadDocument, utc_now
+from evaluation.airflow_benchmark.models import BenchmarkConfig, RunMeasurement, ValidationResult, WorkloadDocument, utc_now
+from evaluation.airflow_benchmark.runner import AirflowBenchmarkRunner, elapsed_ms, parse_api_datetime
 from evaluation.airflow_benchmark.validator import validate_indexed_run
 from evaluation.airflow_benchmark.workload import build_default_workload, load_manifest
 
 
 class AirflowBenchmarkMetricsTests(unittest.TestCase):
+    def test_api_datetimes_are_normalized_for_elapsed_math(self):
+        aware = utc_now()
+        parsed = parse_api_datetime("2026-07-30T12:00:00")
+
+        self.assertIsNotNone(parsed.tzinfo)
+        self.assertIsInstance(elapsed_ms(parsed, aware), float)
+
     def test_percentiles_use_nearest_rank(self):
         values = [100.0, 200.0, 300.0, 400.0]
 
@@ -70,6 +79,72 @@ class AirflowBenchmarkMetricsTests(unittest.TestCase):
         self.assertEqual(summary["goodput_runs_per_minute"], 1.0)
         self.assertEqual(summary["integrity_rate"], 1.0)
         self.assertEqual(summary["latency_ms"]["end_to_end"]["p95"], 2000.0)
+
+
+class AirflowBenchmarkRunnerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_latency_metrics_follow_api_event_order(self):
+        workload = WorkloadDocument(
+            document_id="benchmark-doc",
+            filename="benchmark.txt",
+            content=b"hello",
+            mime_type="text/plain",
+            chunker="paragraph",
+            profile="throughput",
+        )
+        client = Mock()
+        client.upload_file = AsyncMock(
+            return_value={
+                "status": "landed",
+                "ingestion_run_id": "run-id",
+                "document_id": "document-id",
+                "document_version_id": "version-id",
+            }
+        )
+        client.wait_for_terminal_run = AsyncMock(
+            return_value=(
+                {
+                    "status": "indexed",
+                    "document_id": "document-id",
+                    "document_version_id": "version-id",
+                    "created_at": "2026-07-30T12:00:00",
+                    "started_at": "2026-07-30T12:00:01",
+                    "finished_at": "2026-07-30T12:00:03",
+                    "progress": {"bronze": True, "silver": True, "gold": True, "qdrant": True},
+                },
+                parse_api_datetime("2026-07-30T12:00:01"),
+            )
+        )
+        client.list_document_versions = AsyncMock(
+            return_value=[
+                {
+                    "document_version_id": "version-id",
+                    "status": "indexed",
+                    "bronze_path": "bronze/path",
+                    "silver_path": "silver/path",
+                    "gold_path": "gold/path",
+                    "chunker_id": "paragraph",
+                }
+            ]
+        )
+        runner = AirflowBenchmarkRunner(
+            BenchmarkConfig(api_url="http://test"),
+            client=client,
+            workload=[workload],
+        )
+
+        with patch(
+            "evaluation.airflow_benchmark.runner.utc_now",
+            side_effect=[
+                parse_api_datetime("2026-07-30T11:59:59.500000"),
+                parse_api_datetime("2026-07-30T12:00:00.250000"),
+                parse_api_datetime("2026-07-30T12:00:03.500000"),
+            ],
+        ):
+            result = await runner._run_one(Mock(headers={}), "project-id", workload)
+
+        self.assertEqual(result.latency_ms["submission_to_run_created"], 500.0)
+        self.assertEqual(result.latency_ms["api_response_after_run_created"], 250.0)
+        self.assertGreaterEqual(result.latency_ms["submission_to_run_created"], 0.0)
 
 
 class AirflowBenchmarkWorkloadTests(unittest.TestCase):
