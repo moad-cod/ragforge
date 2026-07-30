@@ -1,0 +1,240 @@
+{
+  "config": {
+    "api_url": "http://localhost:8000",
+    "chunker": "paragraph",
+    "concurrency": 1,
+    "dataset_version": "v1",
+    "document_count": 3,
+    "email": null,
+    "experiment_name": "celery-controlled-ingestion",
+    "orchestrator": "celery",
+    "output_dir": "backend/evaluation/results/celery",
+    "password": null,
+    "poll_interval_seconds": 0.5,
+    "timeout_seconds": 240.0
+  },
+  "experiment_id": "celery-f62c4f35a222",
+  "finished_at": "2026-07-30T19:32:19.650497+00:00",
+  "runs": [
+    {
+      "benchmark_document_id": "v1-celery-0001",
+      "chunker": "paragraph",
+      "document_id": "23621102-4399-4256-91c1-7473b7e9e8a2",
+      "document_size_bytes": 3538,
+      "document_type": "txt",
+      "document_version_id": "10305cfd-a2c3-47ee-893e-db1a81a53ac5",
+      "error": null,
+      "filename": "v1-celery-0001.txt",
+      "first_seen_status_at": "2026-07-30T19:32:14.908232+00:00",
+      "ingestion_run_id": "47c8cb47-2163-4fd0-ac60-aa6d9d661efe",
+      "latency_ms": {
+        "api_acceptance": 33.643,
+        "api_response_after_run_created": 10.092,
+        "end_to_end": 1283.762,
+        "observed_end_to_end": 1809.028,
+        "queue_to_start": 256.048,
+        "run_execution": 1037.806,
+        "submission_to_run_created": 23.551
+      },
+      "profile": "throughput",
+      "status": "indexed",
+      "submitted_at": "2026-07-30T19:32:14.639797+00:00",
+      "terminal_observed_at": "2026-07-30T19:32:16.448825+00:00",
+      "upload_accepted_at": "2026-07-30T19:32:14.673440+00:00",
+      "validation": {
+        "errors": [],
+        "observed": {
+          "bronze_path": "bronze/org_id=none/project_id=229f18be-0b7f-441b-92f0-6fa6abdc03ef/document_id=23621102-4399-4256-91c1-7473b7e9e8a2/version=1/raw/v1-celery-0001.txt",
+          "gold_path": "gold/org_id=none/project_id=229f18be-0b7f-441b-92f0-6fa6abdc03ef/document_id=23621102-4399-4256-91c1-7473b7e9e8a2/version=1/embedded_chunks.parquet",
+          "run_status": "indexed",
+          "silver_path": "silver/org_id=none/project_id=229f18be-0b7f-441b-92f0-6fa6abdc03ef/document_id=23621102-4399-4256-91c1-7473b7e9e8a2/version=1/chunks.parquet",
+          "upload_status": "landed",
+          "version_count": 1,
+          "version_status": "indexed"
+        },
+        "valid": true,
+        "warnings": []
+      }
+    },
+    {
+      "benchmark_document_id": "v1-celery-0002",
+      "chunker": "paragraph",
+      "document_id": "03339003-0466-4586-9809-5c6224b12fec",
+      "document_size_bytes": 3538,
+      "document_type": "txt",
+      "document_version_id": "bb25fb03-3a22-4b64-a7de-503830d5f25a",
+      "error": null,
+      "filename": "v1-celery-0002.txt",
+      "first_seen_status_at": "2026-07-30T19:32:16.510612+00:00",
+      "ingestion_run_id": "0b4edb14-4ea1-4d47-a5ad-9d718d391991",
+      "latency_ms": {
+        "api_acceptance": 39.425,
+        "api_response_after_run_created": 10.111,
+        "end_to_end": 1305.374,
+        "observed_end_to_end": 1588.496,
+        "queue_to_start": 34.301,
+        "run_execution": 1281.184,
+        "submission_to_run_created": 29.314
+      },
+      "profile": "throughput",
+      "status": "indexed",
+      "submitted_at": "2026-07-30T19:32:16.457324+00:00",
+      "terminal_observed_at": "2026-07-30T19:32:18.045820+00:00",
+      "upload_accepted_at": "2026-07-30T19:32:16.496749+00:00",
+      "validation": {
+        "errors": [],
+        "observed": {
+          "bronze_path": "bronze/org_id=none/project_id=229f18be-0b7f-441b-92f0-6fa6abdc03ef/document_id=03339003-0466-4586-9809-5c6224b12fec/version=1/raw/v1-celery-0002.txt",
+          "gold_path": "gold/org_id=none/project_id=229f18be-0b7f-441b-92f0-6fa6abdc03ef/document_id=03339003-0466-4586-9809-5c6224b12fec/version=1/embedded_chunks.parquet",
+          "run_status": "indexed",
+          "silver_path": "silver/org_id=none/project_id=229f18be-0b7f-441b-92f0-6fa6abdc03ef/document_id=03339003-0466-4586-9809-5c6224b12fec/version=1/chunks.parquet",
+          "upload_status": "landed",
+          "version_count": 1,
+          "version_status": "indexed"
+        },
+        "valid": true,
+        "warnings": []
+      }
+    },
+    {
+      "benchmark_document_id": "v1-celery-0003",
+      "chunker": "paragraph",
+      "document_id": "7f947bcd-7c5a-4ccd-a263-8212f89f858a",
+      "document_size_bytes": 3538,
+      "document_type": "txt",
+      "document_version_id": "5adbd7f3-4553-4c38-aee9-6502ed85b923",
+      "error": null,
+      "filename": "v1-celery-0003.txt",
+      "first_seen_status_at": "2026-07-30T19:32:18.106268+00:00",
+      "ingestion_run_id": "da681c49-832a-40d1-8b3c-5a0a934954da",
+      "latency_ms": {
+        "api_acceptance": 38.587,
+        "api_response_after_run_created": 10.211,
+        "end_to_end": 1301.065,
+        "observed_end_to_end": 1586.969,
+        "queue_to_start": 33.562,
+        "run_execution": 1277.714,
+        "submission_to_run_created": 28.376
+      },
+      "profile": "throughput",
+      "status": "indexed",
+      "submitted_at": "2026-07-30T19:32:18.054078+00:00",
+      "terminal_observed_at": "2026-07-30T19:32:19.641047+00:00",
+      "upload_accepted_at": "2026-07-30T19:32:18.092665+00:00",
+      "validation": {
+        "errors": [],
+        "observed": {
+          "bronze_path": "bronze/org_id=none/project_id=229f18be-0b7f-441b-92f0-6fa6abdc03ef/document_id=7f947bcd-7c5a-4ccd-a263-8212f89f858a/version=1/raw/v1-celery-0003.txt",
+          "gold_path": "gold/org_id=none/project_id=229f18be-0b7f-441b-92f0-6fa6abdc03ef/document_id=7f947bcd-7c5a-4ccd-a263-8212f89f858a/version=1/embedded_chunks.parquet",
+          "run_status": "indexed",
+          "silver_path": "silver/org_id=none/project_id=229f18be-0b7f-441b-92f0-6fa6abdc03ef/document_id=7f947bcd-7c5a-4ccd-a263-8212f89f858a/version=1/chunks.parquet",
+          "upload_status": "landed",
+          "version_count": 1,
+          "version_status": "indexed"
+        },
+        "valid": true,
+        "warnings": []
+      }
+    }
+  ],
+  "started_at": "2026-07-30T19:32:13.333879+00:00",
+  "status": "passed",
+  "summary": {
+    "failed_or_invalid_runs": 0,
+    "goodput_runs_per_minute": 28.496,
+    "hard_gate_failures": [],
+    "indexed_runs": 3,
+    "integrity_rate": 1.0,
+    "latency_ms": {
+      "api_acceptance": {
+        "count": 3,
+        "max": 39.425,
+        "mean": 37.218,
+        "median": 38.587,
+        "min": 33.643,
+        "p50": 38.587,
+        "p90": 39.425,
+        "p95": 39.425,
+        "p99": 39.425,
+        "stddev": 2.551
+      },
+      "api_response_after_run_created": {
+        "count": 3,
+        "max": 10.211,
+        "mean": 10.138,
+        "median": 10.111,
+        "min": 10.092,
+        "p50": 10.111,
+        "p90": 10.211,
+        "p95": 10.211,
+        "p99": 10.211,
+        "stddev": 0.052
+      },
+      "end_to_end": {
+        "count": 3,
+        "max": 1305.374,
+        "mean": 1296.734,
+        "median": 1301.065,
+        "min": 1283.762,
+        "p50": 1301.065,
+        "p90": 1305.374,
+        "p95": 1305.374,
+        "p99": 1305.374,
+        "stddev": 9.34
+      },
+      "observed_end_to_end": {
+        "count": 3,
+        "max": 1809.028,
+        "mean": 1661.498,
+        "median": 1588.496,
+        "min": 1586.969,
+        "p50": 1588.496,
+        "p90": 1809.028,
+        "p95": 1809.028,
+        "p99": 1809.028,
+        "stddev": 104.322
+      },
+      "queue_to_start": {
+        "count": 3,
+        "max": 256.048,
+        "mean": 107.97,
+        "median": 34.301,
+        "min": 33.562,
+        "p50": 34.301,
+        "p90": 256.048,
+        "p95": 256.048,
+        "p99": 256.048,
+        "stddev": 104.707
+      },
+      "run_execution": {
+        "count": 3,
+        "max": 1281.184,
+        "mean": 1198.901,
+        "median": 1277.714,
+        "min": 1037.806,
+        "p50": 1277.714,
+        "p90": 1281.184,
+        "p95": 1281.184,
+        "p99": 1281.184,
+        "stddev": 113.92
+      },
+      "submission_to_run_created": {
+        "count": 3,
+        "max": 29.314,
+        "mean": 27.08,
+        "median": 28.376,
+        "min": 23.551,
+        "p50": 28.376,
+        "p90": 29.314,
+        "p95": 29.314,
+        "p99": 29.314,
+        "stddev": 2.525
+      }
+    },
+    "submitted_runs": 3,
+    "success_rate": 1.0,
+    "terminal_runs": 3,
+    "throughput_runs_per_minute": 28.496,
+    "validated_indexed_runs": 3
+  }
+}
