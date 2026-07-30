@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import uuid
 
@@ -25,7 +25,10 @@ def parse_api_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
     normalized = value.replace("Z", "+00:00")
-    return datetime.fromisoformat(normalized)
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def elapsed_ms(start: datetime | None, end: datetime | None) -> float | None:
@@ -142,7 +145,8 @@ class AirflowBenchmarkRunner:
         run_finished_at = parse_api_datetime((run_payload or {}).get("finished_at"))
         latency_ms = {
             "api_acceptance": elapsed_ms(submitted_at, upload_accepted_at),
-            "submission_to_run_created": elapsed_ms(upload_accepted_at, run_created_at),
+            "submission_to_run_created": elapsed_ms(submitted_at, run_created_at),
+            "api_response_after_run_created": elapsed_ms(run_created_at, upload_accepted_at),
             "queue_to_start": elapsed_ms(run_created_at, run_started_at),
             "run_execution": elapsed_ms(run_started_at, run_finished_at),
             "end_to_end": elapsed_ms(upload_accepted_at, run_finished_at),
