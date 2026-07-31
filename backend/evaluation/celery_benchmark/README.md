@@ -19,7 +19,7 @@ PYTHONPATH=backend backend/.venv/bin/python -m evaluation.celery_benchmark.cli \
 Reports are written to:
 
 ```text
-backend/evaluation/results/celery/
+artifacts/benchmark-results/celery/
 ```
 
 The runner can also use a dataset manifest:

@@ -1,0 +1,23 @@
+experiment: airflow_vs_celery
+dataset_version: v1
+chunkers:
+  - paragraph
+  - semantic
+concurrency_levels:
+  - 1
+  - 2
+  - 4
+orchestrators:
+  - airflow
+  - celery
+metrics:
+  ingestion:
+    - end_to_end_latency
+    - queue_waiting_time
+    - processing_time
+    - throughput
+    - success_rate
+    - recovery_time
+    - retry_overhead
+    - duplicate_processing_rate
+    - scaling_efficiency

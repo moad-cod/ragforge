@@ -35,7 +35,7 @@ class BenchmarkConfig:
     chunker: str = "paragraph"
     poll_interval_seconds: float = 0.5
     timeout_seconds: float = 240.0
-    output_dir: Path = Path("backend/evaluation/results/celery")
+    output_dir: Path = Path("artifacts/benchmark-results/celery")
     email: str | None = None
     password: str | None = None
 

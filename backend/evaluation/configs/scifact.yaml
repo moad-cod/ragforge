@@ -1,0 +1,12 @@
+dataset: scifact
+source: beir
+retrieval_unit: abstract
+requires_llm: false
+metrics:
+  retrieval:
+    - recall_at_5
+    - precision_at_5
+    - mrr_at_10
+    - ndcg_at_10
+metadata:
+  preserve_original_corpus_id: true

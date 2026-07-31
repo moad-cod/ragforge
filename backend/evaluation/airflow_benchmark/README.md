@@ -19,7 +19,7 @@ PYTHONPATH=backend backend/.venv/bin/python -m evaluation.airflow_benchmark.cli 
 Reports are written to:
 
 ```text
-backend/evaluation/results/airflow/
+artifacts/benchmark-results/airflow/
 ```
 
 The runner can also use a dataset manifest:

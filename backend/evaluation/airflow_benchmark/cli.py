@@ -21,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--chunker", default="paragraph")
     parser.add_argument("--poll-interval-seconds", type=float, default=0.5)
     parser.add_argument("--timeout-seconds", type=float, default=240.0)
-    parser.add_argument("--output-dir", type=Path, default=Path("backend/evaluation/results/airflow"))
+    parser.add_argument("--output-dir", type=Path, default=Path("artifacts/benchmark-results/airflow"))
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--email")
     parser.add_argument("--password")

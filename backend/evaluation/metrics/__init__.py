@@ -1,4 +1,4 @@
-"""Compatibility imports for Airflow benchmark ingestion metrics."""
+"""Shared evaluation metric helpers."""
 
 from evaluation.metrics.ingestion import distribution, percentile, summarize_runs
 
