@@ -42,7 +42,7 @@ export default function ProjectsPage() {
   const remove = useMutation({mutationFn: (projectId: string) => apiFetch(`/projects/${projectId}`, {method: "DELETE"}), onSuccess: async () => {await queryClient.invalidateQueries({queryKey: ["projects"]}); setDeleting(null); toast.success("Project deleted");}, onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to delete project")});
 
   return <div className="mx-auto max-w-7xl space-y-6">
-    <PageHeader eyebrow="Control plane" title="Projects" description="Open a knowledge workspace, monitor document ingestion, and inspect grounded query activity." actions={<Button onClick={() => setDialog("create")}><Plus className="size-4" />New project</Button>} />
+    <PageHeader eyebrow="Workspace" title="Projects" description="Open a project-first RAG workspace for sources, playground queries, pipelines, experiments, and evaluation." actions={<Button onClick={() => setDialog("create")}><Plus className="size-4" />New project</Button>} />
     <div className="flex flex-col gap-3 rounded-xl border border-white/[0.08] bg-[var(--surface)] p-3 sm:flex-row sm:items-center">
       <label className="relative min-w-0 flex-1"><span className="sr-only">Search projects</span><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#64736d]" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search projects" /></label>
       <select value={sort} onChange={(event) => setSort(event.target.value)} className="h-10 rounded-lg border border-white/[0.08] bg-[var(--surface-muted)] px-3 text-xs outline-none" aria-label="Sort projects"><option value="updated">Recently updated</option><option value="name">Name</option></select>
