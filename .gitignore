@@ -32,6 +32,14 @@ Thumbs.db
 !backend/requirements.txt
 uploads/
 documents/
+
+# Generated artifacts
+artifacts/benchmark-results/
+artifacts/test-results/
+artifacts/reports/
+artifacts/coverage/
+backend/evaluation/results/
+
 # Docker
 postgres_data/
 qdrant_data/
