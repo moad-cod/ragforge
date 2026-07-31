@@ -69,9 +69,9 @@ describe("ProjectsPage", () => {
     renderPage();
 
     expect(await screen.findByText("Product knowledge")).toBeInTheDocument();
-    expect(screen.getByRole("link", {name: /open workspace/i})).toHaveAttribute(
+    expect(screen.getByRole("link", {name: /open project/i})).toHaveAttribute(
       "href",
-      "/projects/project-1/documents",
+      "/projects/project-1/overview",
     );
   });
 });

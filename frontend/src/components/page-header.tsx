@@ -17,14 +17,14 @@ export function PageHeader({
             {eyebrow}
           </p>
         ) : null}
-        <h1 className="text-[26px] font-semibold leading-[1.2] tracking-[-0.025em] text-[var(--ink)]">{title}</h1>
+        <h1 className="text-[28px] font-semibold leading-[1.2] tracking-[-0.02em] text-[var(--ink)]">{title}</h1>
         {description ? (
           <p className="mt-2 max-w-2xl text-sm leading-[1.6] text-[var(--ink-muted)]">
             {description}
           </p>
         ) : null}
       </div>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex w-full items-center gap-2 sm:w-auto">{actions}</div> : null}
     </header>
   );
 }

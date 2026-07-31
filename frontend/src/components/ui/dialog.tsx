@@ -39,7 +39,7 @@ export function Dialog({open, onClose, title, description, children, className}:
   }, [onClose, open]);
 
   if (!open) return null;
-  return <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby={description ? "dialog-description" : undefined} onMouseDown={(event) => {if (event.target === event.currentTarget) onClose();}}>
+  return <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby={description ? "dialog-description" : undefined} onMouseDown={(event) => {if (event.target === event.currentTarget) onClose();}}>
     <div ref={panelRef} className={cn("w-full max-w-lg rounded-xl border border-white/10 bg-[var(--surface-muted)] p-5 shadow-2xl sm:p-6", className)}>
       <div className="flex items-start gap-4"><div className="min-w-0 flex-1"><h2 id="dialog-title" className="text-lg font-semibold">{title}</h2>{description ? <p id="dialog-description" className="mt-1.5 text-sm leading-6 text-[var(--ink-muted)]">{description}</p> : null}</div><button onClick={onClose} className="icon-button -mr-2 -mt-2" aria-label="Close dialog"><X className="size-4" /></button></div>
       {children}
