@@ -1516,7 +1516,7 @@ Verify the database schema works before connecting the full platform.
 
 ## Implementation Status — Complete (2026-07-13)
 
-`backend/seed_control_plane.py` creates a deterministic, idempotent graph that
+`backend/scripts/seed_control_plane.py` creates a deterministic, idempotent graph that
 includes every control-plane table. The `backend/tests/test_control_plane_database.py`
 suite runs against a protected database whose name must end in `_test`; it
 validates the relationships and rejection cases above using PostgreSQL rather
@@ -1554,7 +1554,7 @@ Before considering the database complete, verify:
 
 ## Implementation Status — Complete (2026-07-13)
 
-`backend/validate_control_plane.py` uses live database introspection to validate
+`backend/scripts/validate_control_plane.py` uses live database introspection to validate
 the structural portion of this checklist. The Task 21 PostgreSQL integration
 suite validates the behavioral portion and performs the reversible Alembic
 migration cycle. Task 18 lineage tests cover deterministic Qdrant rebuilds;

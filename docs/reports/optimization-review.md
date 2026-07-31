@@ -57,8 +57,8 @@ This file summarizes the current optimized RAGForge backend after the recent arc
 
 ## Developer Workflow
 
-- `backend/create_tables.py` creates missing tables without dropping data.
-- `backend/reset_dev_db.py` destructively deletes all Qdrant collections and rebuilds all database tables for fresh testing.
+- `backend/scripts/create_tables.py` creates missing tables without dropping data.
+- `backend/scripts/reset_dev_db.py` destructively deletes all Qdrant collections and rebuilds all database tables for fresh testing.
 - `test_chunkers.sh` runs an end-to-end smoke test using `Rapport_de_stage_bac+3.pdf`.
 - The smoke test validates `/chunkers`, metadata completeness, invalid chunkers, all text chunkers, document APIs, query APIs, and cleanup.
 - `PROJECT_MAP.md` documents architecture, flows, modules, API surface, and design notes.
@@ -72,7 +72,7 @@ This file summarizes the current optimized RAGForge backend after the recent arc
 
 ```bash
 PYTHONPATH=/home/snow/Documents/Projects/RAGForge/backend python3 -m unittest backend.tests.test_chunker_registry backend.tests.test_chunkers_api -v
-python3 -m compileall -q backend/app backend/tests backend/create_tables.py backend/reset_dev_db.py
+python3 -m compileall -q backend/app backend/tests backend/scripts/create_tables.py backend/scripts/reset_dev_db.py
 bash -n test_chunkers.sh
 ```
 
