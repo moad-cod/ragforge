@@ -28,7 +28,7 @@ local_embeddings = LangchainEmbeddingsWrapper(HuggingFaceEmbeddings(
 ))
 
 QUERY_URL = "http://localhost:8000/rag/query"
-TEST_SET_PATH = "tests/test_set.json"
+TEST_SET_PATH = "tests/fixtures/test_set.json"
 VERSIONS = ["v1", "v2", "v3"]
 
 RUN_CONFIG = RunConfig(
@@ -143,14 +143,15 @@ def main():
     with open(TEST_SET_PATH) as f:
         test_set = json.load(f)
 
+    os.makedirs("artifacts/test-results", exist_ok=True)
     all_results = []
     for version in VERSIONS:
         result = evaluate_version(test_set, version)
         all_results.append(result)
 
-        with open(f"tests/results_{version}.json", "w") as f:
+        with open(f"artifacts/test-results/results_{version}.json", "w") as f:
             json.dump(result, f, indent=2)
-        print(f"  ✓ Saved tests/results_{version}.json")
+        print(f"  ✓ Saved artifacts/test-results/results_{version}.json")
 
     # ── Comparison table ──
     print("\n\n===== FINAL COMPARISON =====\n")

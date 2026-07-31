@@ -3,7 +3,7 @@ import json
 
 QUERY_URL = "http://localhost:8000/rag/query"
 
-with open("tests/test_set.json") as f:
+with open("tests/fixtures/test_set.json") as f:
     test_set = json.load(f)
 
 # Test just first question on v1
