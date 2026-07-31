@@ -1,10 +1,13 @@
-"""Celery worker entrypoint.
+"""Compatibility Celery worker entrypoint.
 
 Run with:
     celery -A worker worker --loglevel=INFO
+
+Prefer:
+    celery -A app.workers.celery_app:celery_app worker --loglevel=INFO
 """
 
-from app.services.celery_app import celery_app
+from app.workers.celery_app import celery_app
 
 
 app = celery_app

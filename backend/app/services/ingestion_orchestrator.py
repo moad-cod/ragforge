@@ -21,7 +21,7 @@ def ingestion_orchestration_enabled() -> bool:
 async def enqueue_ingestion(ingestion_run_id: str) -> str | None:
     orchestrator = selected_orchestrator()
     if orchestrator == "celery":
-        from app.services.celery_ingestion import enqueue_ingestion as enqueue_celery
+        from app.workers.tasks import enqueue_ingestion as enqueue_celery
 
         return await enqueue_celery(ingestion_run_id)
     if orchestrator == "airflow":

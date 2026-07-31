@@ -215,7 +215,7 @@ services:
     command:
       - celery
       - -A
-      - worker
+      - app.workers.celery_app:celery_app
       - worker
       - --loglevel=INFO
     environment:
