@@ -30,20 +30,21 @@
      Page backgrounds and large application regions
   ====================================================== */
 
-  --background: #070707;
-  --background-soft: #0a0a0a;
-  --background-subtle: #0d0d0d;
+  --background: #090909;
+  --background-soft: #0d0d0d;
+  --background-subtle: #101010;
+  --sidebar: #0d0d0d;
 
   /* =====================================================
      30% — STRUCTURAL SURFACES
      Sidebars, cards, modals, inputs and panels
   ====================================================== */
 
-  --surface: #111111;
+  --surface: #131313;
   --surface-muted: #161616;
-  --surface-raised: #1b1b1b;
-  --surface-hover: #222222;
-  --surface-active: #292826;
+  --surface-raised: #191919;
+  --surface-hover: #202020;
+  --surface-active: #242220;
   --surface-overlay: #0e0e0e;
 
   --surface-dark: #050505;
@@ -54,20 +55,23 @@
      TEXT
   ====================================================== */
 
-  --ink: #f7f4ef;
-  --ink-secondary: #d8d2ca;
-  --ink-muted: #aaa39a;
-  --ink-faint: #817a72;
-  --ink-disabled: #5c5751;
-  --ink-inverse: #11100f;
+  --ink: #f4efe7;
+  --ink-secondary: #c9c1b7;
+  --ink-muted: #b7b0a7;
+  --ink-faint: #77716a;
+  --ink-disabled: #5f5952;
+  --ink-inverse: #111111;
+  --text-primary: #f4efe7;
+  --text-secondary: #b7b0a7;
+  --text-muted: #77716a;
 
   /* =====================================================
      BORDERS
   ====================================================== */
 
-  --border: rgba(235, 224, 209, 0.1);
-  --border-strong: rgba(235, 224, 209, 0.18);
-  --border-hover: rgba(235, 224, 209, 0.3);
+  --border: #2b2926;
+  --border-strong: #403c36;
+  --border-hover: rgba(235, 224, 209, 0.32);
   --border-focus: rgba(235, 224, 209, 0.65);
 
   /* =====================================================
@@ -76,9 +80,10 @@
   ====================================================== */
 
   --accent: #ebe0d1;
-  --accent-hover: #f5ede2;
+  --accent-hover: #fff7ec;
   --accent-strong: #fff8ef;
   --accent-deep: #cbbba8;
+  --accent-foreground: #111111;
 
   --accent-soft: rgba(235, 224, 209, 0.08);
   --accent-muted: rgba(235, 224, 209, 0.14);
@@ -108,21 +113,21 @@
      SEMANTIC COLORS
   ====================================================== */
 
-  --success: #8fb1d8;
-  --success-soft: rgba(143, 177, 216, 0.1);
-  --success-border: rgba(143, 177, 216, 0.25);
+  --success: #70b98b;
+  --success-soft: rgba(112, 185, 139, 0.1);
+  --success-border: rgba(112, 185, 139, 0.25);
 
   --info: #a9b9d0;
   --info-soft: rgba(169, 185, 208, 0.1);
   --info-border: rgba(169, 185, 208, 0.25);
 
-  --warning: #d6a85f;
+  --warning: #d6a75c;
   --warning-soft: rgba(214, 168, 95, 0.1);
   --warning-border: rgba(214, 168, 95, 0.25);
 
-  --danger: #d97878;
-  --danger-soft: rgba(217, 120, 120, 0.1);
-  --danger-border: rgba(217, 120, 120, 0.25);
+  --danger: #d76c6c;
+  --danger-soft: rgba(215, 108, 108, 0.1);
+  --danger-border: rgba(215, 108, 108, 0.25);
 
   /* =====================================================
      SHADOWS
@@ -162,18 +167,7 @@ html {
 body {
   margin: 0;
 
-  background:
-    radial-gradient(
-      circle at 50% -15%,
-      rgba(235, 224, 209, 0.045),
-      transparent 34rem
-    ),
-    radial-gradient(
-      circle at 100% 20%,
-      rgba(235, 224, 209, 0.025),
-      transparent 28rem
-    ),
-    var(--background);
+  background: var(--background);
 
   color: var(--ink);
 

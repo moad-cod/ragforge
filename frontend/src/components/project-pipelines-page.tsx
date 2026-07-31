@@ -32,7 +32,7 @@ export function ProjectPipelinesPage({projectId}: {projectId: string}) {
         <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
           <div className="flex items-center gap-2"><Settings2 className="size-4 text-[var(--accent)]" /><h2 className="text-sm font-semibold">Chunking default</h2></div>
           <p className="mt-3 text-xs leading-5 text-[var(--ink-muted)]">{recommended ? `${recommended.name}: ${recommended.short_description}` : "Chunker catalog is loading or unavailable."}</p>
-          <p className="mt-3 text-[9px] leading-4 text-[#64736d]">Project-level pipeline configuration is not persisted by the current backend; selected chunkers are stored on document versions.</p>
+          <p className="mt-3 text-[9px] leading-4 text-[#77716a]">Project-level pipeline configuration is not persisted by the current backend; selected chunkers are stored on document versions.</p>
         </section>
         <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
           <div className="flex items-center gap-2"><Database className="size-4 text-[var(--accent)]" /><h2 className="text-sm font-semibold">Artifacts</h2></div>

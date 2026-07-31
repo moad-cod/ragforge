@@ -12,7 +12,7 @@ export default function AuthLayout({children}: {children: React.ReactNode}) {
           <h1 className="text-4xl font-semibold leading-[1.1] tracking-tight">
             Turn documents into an observable knowledge system.
           </h1>
-          <p className="mt-6 max-w-lg text-base leading-7 text-[#a9b7b0]">
+          <p className="mt-6 max-w-lg text-base leading-7 text-[#b7b0a7]">
             Upload, track, query, and inspect every stage of your retrieval
             pipeline from one focused workspace.
           </p>
@@ -27,12 +27,12 @@ export default function AuthLayout({children}: {children: React.ReactNode}) {
                 className="rounded-2xl border border-white/10 bg-white/[0.04] p-4"
               >
                 <div className="font-semibold">{title}</div>
-                <div className="mt-1 text-xs text-[#71847b]">{description}</div>
+                <div className="mt-1 text-xs text-[#8f877f]">{description}</div>
               </div>
             ))}
           </div>
         </div>
-        <p className="text-xs text-[#53625b]">
+        <p className="text-xs text-[#5f5952]">
           RAGForge · Authenticated retrieval control plane
         </p>
       </section>

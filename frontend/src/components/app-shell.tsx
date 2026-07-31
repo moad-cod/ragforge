@@ -238,7 +238,7 @@ export function AppShell({children}: {children: React.ReactNode}) {
         </div>
       </nav>
       <div className="border-t border-white/[0.08] p-2">
-        <button onClick={toggleCollapsed} className={cn("hidden h-10 w-full items-center gap-3 rounded-[10px] px-3 text-[11px] text-[#71847b] hover:bg-white/[0.04] hover:text-white md:flex", collapsed && "justify-center px-0")} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+        <button onClick={toggleCollapsed} className={cn("hidden h-10 w-full items-center gap-3 rounded-[10px] px-3 text-[11px] text-[#8f877f] hover:bg-white/[0.04] hover:text-white md:flex", collapsed && "justify-center px-0")} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
           {collapsed ? <PanelLeftOpen className="size-4" /> : <><PanelLeftClose className="size-4" /><span>Collapse sidebar</span></>}
         </button>
       </div>
@@ -249,14 +249,14 @@ export function AppShell({children}: {children: React.ReactNode}) {
     <aside className={cn("fixed inset-y-0 left-0 z-50 hidden border-r border-[var(--border)] bg-[#090909] transition-[width] duration-200 md:block", collapsed ? "w-[68px]" : "w-[214px]")}>{sidebar()}</aside>
 
     <div className={cn("min-h-dvh transition-[padding] duration-200", collapsed ? "md:pl-[68px]" : "md:pl-[214px]")}>
-      <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-[var(--border)] bg-[#090909]/95 px-3 backdrop-blur-xl sm:px-5">
+      <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-[var(--border)] bg-[#090909]/95 px-3 sm:px-5">
         <div className="flex min-w-0 items-center gap-2">
           <button className="icon-button md:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Menu className="size-5" /></button>
           <nav className="hidden min-w-0 items-center gap-1.5 sm:flex" aria-label="Breadcrumbs">
-            <Link href="/projects" className="text-[11px] text-[#71847b] hover:text-white">RAGForge</Link>
+            <Link href="/projects" className="text-[11px] text-[#8f877f] hover:text-white">RAGForge</Link>
             {breadcrumbs.slice(-3).map((label, index, shown) => <span key={`${label}-${index}`} className="flex min-w-0 items-center gap-1.5">
-              <ChevronRight className="size-3 shrink-0 text-[#40524a]" />
-              <span className={cn("max-w-40 truncate text-[11px] capitalize", index === shown.length - 1 ? "text-[#dce6e1]" : "text-[#71847b]")}>{label}</span>
+              <ChevronRight className="size-3 shrink-0 text-[#403c36]" />
+              <span className={cn("max-w-40 truncate text-[11px] capitalize", index === shown.length - 1 ? "text-[#f4efe7]" : "text-[#8f877f]")}>{label}</span>
             </span>)}
           </nav>
           <span className="truncate text-sm font-medium sm:hidden">{breadcrumbs.at(-1) ?? "RAGForge"}</span>
@@ -264,18 +264,18 @@ export function AppShell({children}: {children: React.ReactNode}) {
 
         <div className="flex items-center gap-1.5">
           <label className="hidden h-9 items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.025] px-2.5 lg:flex">
-            <Building2 className="size-3.5 text-[#64736d]" />
+            <Building2 className="size-3.5 text-[#77716a]" />
             <span className="sr-only">Organization</span>
             <select
               value={user?.organization_id ?? ""}
               onChange={(event) => switchOrganization.mutate(event.target.value)}
-              className="max-w-40 bg-transparent text-[11px] text-[#b8c5bf] outline-none"
+              className="max-w-40 bg-transparent text-[11px] text-[#c9c1b7] outline-none"
               aria-label="Organization switcher"
             >
               <option value="">Personal workspace</option>
               {organizations.map((organization) => <option key={organization.organization_id} value={organization.organization_id}>{organization.name}</option>)}
             </select>
-            <ChevronDown className="size-3 text-[#53625b]" />
+            <ChevronDown className="size-3 text-[#5f5952]" />
           </label>
           {projectId ? <label className="hidden h-9 items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.025] px-2.5 xl:flex">
             <FolderKanban className="size-3.5 text-[#817a72]" />
@@ -290,21 +290,21 @@ export function AppShell({children}: {children: React.ReactNode}) {
             </select>
             <ChevronDown className="size-3 text-[#5c5751]" />
           </label> : null}
-          <button onClick={() => setPaletteOpen(true)} className="hidden h-9 w-52 items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.025] px-3 text-left text-[10px] text-[#64736d] hover:border-white/[0.15] lg:flex" aria-label="Open global search">
+          <button onClick={() => setPaletteOpen(true)} className="hidden h-9 w-52 items-center gap-2 rounded-[10px] border border-white/[0.08] bg-white/[0.025] px-3 text-left text-[10px] text-[#77716a] hover:border-white/[0.15] lg:flex" aria-label="Open global search">
             <Search className="size-3.5" /><span className="flex-1">Search projects</span><kbd className="rounded border border-white/10 px-1.5 py-0.5 text-[8px]">⌘ K</kbd>
           </button>
           <button className="icon-button lg:hidden" onClick={() => setPaletteOpen(true)} aria-label="Open global search"><Search className="size-4" /></button>
           <div className="relative">
             <button className="icon-button" onClick={() => {setNotificationsOpen((value) => !value); setUserMenuOpen(false);}} aria-label="Notifications" aria-expanded={notificationsOpen}><Bell className="size-4" /></button>
-            {notificationsOpen ? <div className="popover right-0 top-11 w-72 p-4"><p className="text-xs font-semibold">Notifications</p><div className="mt-4 rounded-lg bg-white/[0.025] p-4 text-center"><Bell className="mx-auto size-4 text-[#53625b]" /><p className="mt-2 text-[10px] text-[#93a39c]">No new notifications</p><p className="mt-1 text-[8px] text-[#53625b]">Pipeline failures remain visible in ingestion runs.</p></div></div> : null}
+            {notificationsOpen ? <div className="popover right-0 top-11 w-72 p-4"><p className="text-xs font-semibold">Notifications</p><div className="mt-4 rounded-lg bg-white/[0.025] p-4 text-center"><Bell className="mx-auto size-4 text-[#5f5952]" /><p className="mt-2 text-[10px] text-[#aaa39a]">No new notifications</p><p className="mt-1 text-[8px] text-[#5f5952]">Pipeline failures remain visible in ingestion runs.</p></div></div> : null}
           </div>
           <div className="relative">
             <button onClick={() => {setUserMenuOpen((value) => !value); setNotificationsOpen(false);}} className="flex h-9 items-center gap-2 rounded-[10px] px-1.5 hover:bg-white/[0.04]" aria-label="User menu" aria-expanded={userMenuOpen}>
               <span className="flex size-7 items-center justify-center rounded-full bg-[var(--surface-raised)] text-[9px] font-semibold text-[var(--accent-strong)]">{user ? initials(user.full_name, user.email) : "…"}</span>
-              <ChevronDown className="hidden size-3 text-[#64736d] sm:block" />
+              <ChevronDown className="hidden size-3 text-[#77716a] sm:block" />
             </button>
             {userMenuOpen ? <div className="popover right-0 top-11 w-56 p-1.5">
-              <div className="border-b border-white/[0.08] px-2.5 py-2"><p className="truncate text-[11px] font-medium">{user?.full_name || "RAGForge user"}</p><p className="mt-0.5 truncate text-[9px] text-[#64736d]">{user?.email}</p></div>
+              <div className="border-b border-white/[0.08] px-2.5 py-2"><p className="truncate text-[11px] font-medium">{user?.full_name || "RAGForge user"}</p><p className="mt-0.5 truncate text-[9px] text-[#77716a]">{user?.email}</p></div>
               <Link href="/settings/profile" onClick={() => setUserMenuOpen(false)} className="menu-item"><UserRound className="size-3.5" />Profile settings</Link>
               <button onClick={logout} className="menu-item w-full"><LogOut className="size-3.5" />Sign out</button>
             </div> : null}
@@ -319,15 +319,15 @@ export function AppShell({children}: {children: React.ReactNode}) {
       <aside className="relative h-full w-[min(19rem,88vw)] border-r border-[var(--border)] bg-[#090909] shadow-2xl">{sidebar(true)}</aside>
     </div> : null}
 
-    {paletteOpen ? <div className="fixed inset-0 z-[110] flex items-start justify-center bg-black/70 px-4 pt-[12vh] backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Global search" onMouseDown={(event) => {if (event.target === event.currentTarget) setPaletteOpen(false);}}>
+    {paletteOpen ? <div className="fixed inset-0 z-[110] flex items-start justify-center bg-black/70 px-4 pt-[12vh]" role="dialog" aria-modal="true" aria-label="Global search" onMouseDown={(event) => {if (event.target === event.currentTarget) setPaletteOpen(false);}}>
       <div className="w-full max-w-xl overflow-hidden rounded-xl border border-white/10 bg-[var(--surface-muted)] shadow-2xl">
-        <label className="flex h-13 items-center gap-3 border-b border-white/[0.08] px-4"><Search className="size-4 text-[#64736d]" /><span className="sr-only">Search projects</span><input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#53625b]" placeholder="Search projects…" /><button onClick={() => setPaletteOpen(false)} className="rounded border border-white/10 px-1.5 py-1 text-[8px] text-[#64736d]">ESC</button></label>
+        <label className="flex h-13 items-center gap-3 border-b border-white/[0.08] px-4"><Search className="size-4 text-[#77716a]" /><span className="sr-only">Search projects</span><input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#5f5952]" placeholder="Search projects…" /><button onClick={() => setPaletteOpen(false)} className="rounded border border-white/10 px-1.5 py-1 text-[8px] text-[#77716a]">ESC</button></label>
         <div className="max-h-80 overflow-y-auto p-2">
-          <p className="px-2 py-1.5 text-[8px] font-semibold uppercase tracking-[.14em] text-[#53625b]">Projects</p>
-          {searchResults.map((item) => <button key={item.project_id} onClick={() => {router.push(`/projects/${item.project_id}/overview`); setPaletteOpen(false);}} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-white/[0.04]"><span className="flex size-8 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]"><FolderKanban className="size-4" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{item.name}</span><span className="font-mono text-[8px] text-[#53625b]">{item.project_id}</span></span><ChevronRight className="size-3 text-[#53625b]" /></button>)}
-          {!searchResults.length ? <p className="px-3 py-8 text-center text-[10px] text-[#64736d]">No projects match “{search}”.</p> : null}
+          <p className="px-2 py-1.5 text-[8px] font-semibold uppercase tracking-[.14em] text-[#5f5952]">Projects</p>
+          {searchResults.map((item) => <button key={item.project_id} onClick={() => {router.push(`/projects/${item.project_id}/overview`); setPaletteOpen(false);}} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-white/[0.04]"><span className="flex size-8 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]"><FolderKanban className="size-4" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{item.name}</span><span className="font-mono text-[8px] text-[#5f5952]">{item.project_id}</span></span><ChevronRight className="size-3 text-[#5f5952]" /></button>)}
+          {!searchResults.length ? <p className="px-3 py-8 text-center text-[10px] text-[#77716a]">No projects match “{search}”.</p> : null}
         </div>
-        <div className="flex items-center gap-4 border-t border-white/[0.08] px-4 py-2 text-[8px] text-[#53625b]"><span><kbd>↑↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span className="ml-auto flex items-center gap-1"><Command className="size-2.5" />K anywhere</span></div>
+        <div className="flex items-center gap-4 border-t border-white/[0.08] px-4 py-2 text-[8px] text-[#5f5952]"><span><kbd>↑↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span className="ml-auto flex items-center gap-1"><Command className="size-2.5" />K anywhere</span></div>
       </div>
     </div> : null}
   </div>;
