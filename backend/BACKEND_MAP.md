@@ -63,7 +63,7 @@ The main application entry point is `app/main.py`. It creates the FastAPI applic
 | `tests/` | Unit/integration coverage plus an environment-driven end-to-end suite. |
 | `Dockerfile` | Python 3.12 FastAPI image. |
 | `airflow/Dockerfile` | Airflow 3.3 image with pipeline dependencies. |
-| `worker.py` | Celery worker entry point (`celery -A worker worker --loglevel=INFO`). |
+| `worker.py` | Celery worker entry point (`celery -A app.workers.celery_app:celery_app worker --loglevel=INFO`). |
 | `requirements.txt` | Default text-RAG API dependencies, including Celery. Heavy multimodal/reranker packages are deliberately excluded. |
 
 ## 3. HTTP API map
@@ -214,7 +214,7 @@ File ingestion no longer imports Airflow directly. `app/api/ingest.py` calls `in
 | Value | Behavior |
 | --- | --- |
 | `airflow` | Trigger `app/services/airflow.py` when `AIRFLOW_API_URL` is configured. |
-| `celery` | Trigger `app/services/celery_ingestion.py` when `CELERY_BROKER_URL` or eager mode is configured. |
+| `celery` | Trigger `app/workers/tasks.py` when `CELERY_BROKER_URL` or eager mode is configured. |
 | anything else | Do not trigger an external orchestrator; the run remains durable in PostgreSQL. |
 
 PostgreSQL remains the durable state machine in both modes. The UI and public API continue to read `/ingest/runs/{id}` and `/ingest/runs/{id}/events`, not Airflow or Celery's native state stores.
@@ -257,7 +257,7 @@ The plan is returned by the internal run endpoint, passed between Airflow tasks 
 
 `airflow/plugins/ragforge_control_plane.py` records task statuses through the internal FastAPI API and marks the run failed from Airflow's failure callback.
 
-### Celery orchestration (`app/services/celery_ingestion.py`)
+### Celery orchestration (`app/workers/tasks.py`)
 
 The Celery implementation builds this chain:
 
@@ -271,7 +271,7 @@ chain(
 )
 ```
 
-`app/services/celery_app.py` configures the Celery application with late acknowledgements, worker-lost rejection, started tracking, result extension, a configurable prefetch multiplier, and optional eager mode. `worker.py` exposes the app as the worker entry point.
+`app/workers/celery_app.py` configures the Celery application with late acknowledgements, worker-lost rejection, started tracking, result extension, a configurable prefetch multiplier, and optional eager mode. `worker.py` exposes the app as the worker entry point.
 
 Each task wraps one shared stage from `jobs/ingestion_workflow.py`. Stage failures retry according to `CELERY_TASK_MAX_RETRIES` and `CELERY_TASK_RETRY_DELAY_SECONDS`. When the final retry is exhausted, Celery attempts to mark the durable ingestion run `failed` through the internal control-plane API.
 
@@ -492,8 +492,8 @@ Embedding-run states are `queued`, `running`, `completed`, `failed`, and `cancel
 | `app/services/pipeline_artifacts.py` | S3 artifact store, deterministic paths, Silver/Gold Parquet schemas and transformations. |
 | `app/services/ingestion_orchestrator.py` | Select Airflow or Celery enqueue behavior from `ORCHESTRATOR`. |
 | `app/services/airflow.py` | Authenticate to Airflow 3's REST API, trigger a DAG run, and persist its ID. |
-| `app/services/celery_app.py` | Celery app configuration for ingestion workers. |
-| `app/services/celery_ingestion.py` | Celery task chain and enqueue function for the durable ingestion pipeline. |
+| `app/workers/celery_app.py` | Celery app configuration for ingestion workers. |
+| `app/workers/tasks.py` | Celery task chain and enqueue function for the durable ingestion pipeline. |
 | `app/services/ingestion_planner.py` | Classify chunker/source metadata into execution, resource, batching, and command-selection hints. |
 | `app/services/chunk_indexing.py` | Validate Gold chunks and maintain deterministic PostgreSQL-Qdrant lineage. |
 | `app/services/indexer.py` | Qdrant collection creation, legacy direct indexing/deletion, hierarchical points, and multimodal points. |
@@ -505,13 +505,13 @@ Embedding-run states are `queued`, `running`, `completed`, `failed`, and `cancel
 | `jobs/bronze_to_silver.py` | CLI wrapper for Bronze -> Silver. |
 | `jobs/silver_to_gold.py` | CLI wrapper for Silver -> Gold. |
 | `jobs/upsert_qdrant.py` | CLI wrapper that reads Gold and submits chunks for indexing. |
-| `worker.py` | Celery worker entry point. |
+| `worker.py` | Compatibility Celery worker entry point; new Docker commands use `app.workers.celery_app:celery_app`. |
 
 ### Evaluation and benchmarking
 
 | File/package | Responsibility |
 | --- | --- |
-| `evaluation/RAGForge_Airflow_vs_Celery_Evaluation_Framework.md` | Benchmark design and comparison criteria. |
+| `../docs/research/evaluation-framework.md` | Benchmark design and comparison criteria. |
 | `evaluation/airflow_benchmark/` | Airflow benchmark CLI/client/workload/validation/metrics/report package. |
 | `evaluation/celery_benchmark/` | Celery benchmark CLI/client/workload/validation/metrics/report package. |
 
@@ -535,11 +535,11 @@ Embedding-run states are `queued`, `running`, `completed`, `failed`, and `cancel
 | --- | --- |
 | `app/services/control_plane_validation.py` | Introspect required tables, keys, unique/check constraints, and indexes. |
 | `app/services/control_plane_seed.py` | Deterministic development seed graph. |
-| `create_tables.py` | Create missing tables directly from ORM metadata; useful as a convenience, but Alembic is the schema authority. |
-| `seed_control_plane.py` | CLI for deterministic seed data. |
-| `validate_control_plane.py` | CLI for schema validation. |
-| `reset_dev_db.py` | Destructively delete all Qdrant collections, drop app tables, and migrate to Alembic head. |
-| `check_data.py`, `cleanup.py` | Hard-coded/manual diagnostic scripts, not general operational commands. |
+| `scripts/create_tables.py` | Create missing tables directly from ORM metadata; useful as a convenience, but Alembic is the schema authority. |
+| `scripts/seed_control_plane.py` | CLI for deterministic seed data. |
+| `scripts/validate_control_plane.py` | CLI for schema validation. |
+| `scripts/reset_dev_db.py` | Destructively delete all Qdrant collections, drop app tables, and migrate to Alembic head. |
+| `scripts/check_data.py`, `scripts/cleanup.py` | Hard-coded/manual diagnostic scripts, not general operational commands. |
 
 ## 10. Chunkers
 
@@ -687,13 +687,13 @@ alembic upgrade head
 Validate the migrated control-plane schema:
 
 ```bash
-python validate_control_plane.py
+python -m scripts.validate_control_plane
 ```
 
 Seed deterministic development records:
 
 ```bash
-python seed_control_plane.py --namespace development
+python -m scripts.seed_control_plane --namespace development
 ```
 
 Run the local Compose stack with Airflow orchestration from the repository root:
@@ -713,7 +713,7 @@ PIPELINE_SERVICE_TOKEN=<shared-secret> ORCHESTRATOR=celery \
 Run a Celery worker directly from the backend directory when dependencies and services are already available:
 
 ```bash
-celery -A worker worker --loglevel=INFO
+celery -A app.workers.celery_app:celery_app worker --loglevel=INFO
 ```
 
 Run the Airflow benchmark CLI from the repository root:
@@ -733,17 +733,18 @@ PYTHONPATH=backend backend/.venv/bin/python -m evaluation.celery_benchmark.cli \
 Run the top-level test modules (this excludes `tests/e2e/`; PostgreSQL integration tests skip unless explicitly enabled):
 
 ```bash
-python -m unittest tests/test_*.py
+python -m unittest discover -s tests/unit -v
+python -m unittest discover -s tests/benchmarks -v
 ```
 
 Run the destructive, dedicated PostgreSQL test database suite with a database name ending in `_test`:
 
 ```bash
 RUN_DATABASE_TESTS=1 TEST_DATABASE_URL=postgresql+asyncpg://.../ragforge_test \
-  python -m unittest tests.test_control_plane_database -v
+  python -m unittest tests.integration.postgres.test_control_plane_database -v
 ```
 
-The full E2E test is environment/infrastructure-driven, currently expects the Compose-style FastAPI/Airflow/MinIO/Qdrant/provider network, and uses `tests/e2e/provider_stub.py` as a deterministic OpenAI-compatible provider. Plain recursive discovery also finds this E2E package, so do not use it as a local unit-only command. `tests/evaluate.py` is a separate RAGAS evaluation utility with extra dependencies that are not part of the base `requirements.txt`.
+The full E2E test is environment/infrastructure-driven, currently expects the Compose-style FastAPI/Airflow/MinIO/Qdrant/provider network, and uses `tests/e2e/provider_stub.py` as a deterministic OpenAI-compatible provider. Plain recursive discovery also finds this E2E package, so do not use it as a local unit-only command. `evaluation/legacy/evaluate_legacy_ragas.py` is a separate RAGAS evaluation utility with extra dependencies that are not part of the base `requirements.txt`.
 
 The root Docker image launches Uvicorn on port 8000. Database migrations are not run automatically by the image or FastAPI startup; deployment must run them separately.
 
@@ -802,7 +803,7 @@ These are important implementation facts, not necessarily defects in every deplo
 | Add an LLM provider | `LLM_CONFIGS` and settings in `app/api/query.py`/`app/core/config.py` | `QueryRequest` literal, credentials, streaming tests. |
 | Change realtime events | `app/services/event_stream.py` | Ingestion/query SSE routes and realtime tests. |
 | Change Airflow stages | `airflow/dags/ragforge_ingestion.py` | internal pipeline API, transition graph, jobs, event stage mappings. |
-| Change Celery stages | `app/services/celery_ingestion.py` and `jobs/ingestion_workflow.py` | internal pipeline API, transition graph, retry behavior, benchmark tests. |
+| Change Celery stages | `app/workers/tasks.py` and `jobs/ingestion_workflow.py` | internal pipeline API, transition graph, retry behavior, benchmark tests. |
 | Change orchestrator selection | `app/services/ingestion_orchestrator.py` | `app/api/ingest.py`, settings, Compose profiles, Airflow/Celery service tests. |
 | Change benchmark metrics | `evaluation/airflow_benchmark/` and `evaluation/celery_benchmark/` | paired benchmark tests so both orchestrators report comparable numbers. |
 

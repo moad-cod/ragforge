@@ -41,7 +41,7 @@ Next.js control-plane UI / Swagger UI
 | Pipeline control | `backend/app/api/internal_pipeline.py`, `backend/app/services/ingestion_orchestrator.py`, `backend/app/services/ingestion_planner.py` | Authenticated run metadata/status boundary, Airflow/Celery selection, and deterministic technique-to-execution planning |
 | Batch artifacts | `backend/app/services/pipeline_artifacts.py`, `backend/jobs/*.py` | Bronze parsing/chunking, shared stage functions, Silver/Gold Parquet, adaptive embedding batches, and Qdrant indexing |
 | Airflow execution | `backend/airflow/dags/ragforge_ingestion.py`, `backend/jobs/ingestion_execution.py` | Detects the selected chunking technique, chooses profile-aware commands, and exports resource hints |
-| Celery execution | `backend/app/services/celery_app.py`, `backend/app/services/celery_ingestion.py`, `backend/worker.py` | Configures the Celery app, publishes the ingestion chain, retries failed stages, and exposes the worker entry point |
+| Celery execution | `backend/app/workers/celery_app.py`, `backend/app/workers/tasks.py`, `backend/worker.py` | Configures the Celery app, publishes the ingestion chain, retries failed stages, and exposes the worker entry point |
 | Benchmarks | `backend/evaluation/airflow_benchmark/*`, `backend/evaluation/celery_benchmark/*` | Matched orchestration benchmark CLIs, clients, workloads, validators, metrics, and report writers |
 | Query | `backend/app/api/query.py` | Text and multimodal queries, query SSE, history, and retrieval trace responses |
 | Chunker catalog | `backend/app/api/chunkers.py`, `backend/app/services/chunkers/registry.py` | Public chunker metadata, validation, and lazy callable lookup |
@@ -107,8 +107,6 @@ backend/
       storage.py
       bronze_storage.py
       airflow.py
-      celery_app.py
-      celery_ingestion.py
       ingestion_orchestrator.py
       event_stream.py
       chunk_indexing.py
@@ -119,6 +117,9 @@ backend/
       ingestion_planner.py
       control_plane_seed.py
       control_plane_validation.py
+    workers/
+      celery_app.py
+      tasks.py
   jobs/
     bronze_to_silver.py
     control_plane.py
@@ -137,17 +138,26 @@ backend/
     dags/ragforge_ingestion.py
     plugins/ragforge_control_plane.py
   evaluation/
+    configs/
+    metrics/
     airflow_benchmark/
     celery_benchmark/
+    legacy/
+  scripts/
+    check_data.py
+    cleanup.py
+    create_tables.py
+    reset_dev_db.py
+    seed_control_plane.py
+    validate_control_plane.py
   worker.py
   alembic.ini
-  create_tables.py
-  reset_dev_db.py
-  seed_control_plane.py
-  validate_control_plane.py
-  check_data.py
-  cleanup.py
   tests/
+    unit/
+    integration/
+    e2e/
+    benchmarks/
+    fixtures/
 frontend/
   Dockerfile
   src/
@@ -156,13 +166,21 @@ frontend/
     hooks/
     lib/
     test/
-Data-Modeling/
-  ControlPlane.md
-  Tables.png
-  design.png
-  lifecyvle.png
-documents/
-  Pdf/
+docs/
+  architecture/
+    control-plane.md
+    data-model.png
+    document-lifecycle.png
+    system-design.png
+  research/
+    evaluation-framework.md
+  reports/
+    optimization-review.md
+  plans/
+    ragforge-v2-build-plan.md
+artifacts/
+  benchmark-results/
+  test-results/
 scripts/
   e2e_v2.sh
   init_minio.sh
@@ -243,7 +261,7 @@ Projects use UUID-based Qdrant collection names (`project_<uuid>`) so display na
 
 ## Control-Plane Schema (Tasks 4–11)
 
-The v2 schema defined in `Data-Modeling/ControlPlane.md` is represented in SQLAlchemy metadata. A clean `create_tables.py` or `reset_dev_db.py` run creates all ten tables.
+The v2 schema defined in `docs/architecture/control-plane.md` is represented in SQLAlchemy metadata. A clean `python -m scripts.create_tables` or `python -m scripts.reset_dev_db` run from `backend/` creates all ten tables.
 
 | Task | Implemented result |
 |---|---|
@@ -307,7 +325,7 @@ multipart uploads, and streaming SSE responses. Ingestion views reconnect with
 also exposes tenant-owned recent runs, safe failed-run retries, query history,
 and ranked chunk/document retrieval traces.
 
-Airflow and Celery talk to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally keeps orchestration workers from owning application database writes directly. The internal API delegates every write to the same ingestion repository used elsewhere. In Airflow mode, FastAPI authenticates through Airflow's `/auth/token` endpoint and triggers DAG runs through the Airflow 3 public `/api/v2` API. In Celery mode, FastAPI publishes a Celery chain through `app/services/celery_ingestion.py`.
+Airflow and Celery talk to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally keeps orchestration workers from owning application database writes directly. The internal API delegates every write to the same ingestion repository used elsewhere. In Airflow mode, FastAPI authenticates through Airflow's `/auth/token` endpoint and triggers DAG runs through the Airflow 3 public `/api/v2` API. In Celery mode, FastAPI publishes a Celery chain through `app/workers/tasks.py`.
 
 The `ragforge_ingestion` DAG runs `detect_ingestion_technique`, `bronze_to_silver`, `silver_to_gold_embed`, `upsert_qdrant`, and `update_postgres_status`. The Celery chain mirrors the same logical boundaries as `detect_ingestion_plan_task`, `bronze_to_silver_task`, `silver_to_gold_task`, `upsert_qdrant_task`, and `finalize_ingestion_task`. The first stage reads durable run/version/document metadata through the control-plane API, receives an `ingestion_plan`, and records the run as `running`. Airflow transformation commands receive `{ingestion_run_id}`, `{profile}`, `{chunker_id}`, and `{source_type}`; Celery tasks call shared Python stage functions in `backend/jobs/ingestion_workflow.py`. The Task 18 indexing boundary accepts embedded Gold chunks at `POST /internal/pipeline/ingestion-runs/{id}/chunks/index`, rebuilds that version's Qdrant points, and atomically replaces its PostgreSQL chunk rows.
 
@@ -424,7 +442,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 Airflow profile services, enabled with `--profile airflow`, add the Airflow 3.3 API server/new UI, scheduler, standalone DAG processor, triggerer, metadata database, and Spark. They use the custom `backend/airflow/Dockerfile`, which adds the parser, PyArrow, FastEmbed, and MinIO dependencies used by Task 25. The local stack keeps `LocalExecutor`.
 
-Celery profile services, enabled with `--profile celery`, add `celery-worker`, which runs `celery -A worker worker --loglevel=INFO` against the same FastAPI, PostgreSQL, MinIO, Qdrant, and Redis services. Use `ORCHESTRATOR=celery` and a shared `PIPELINE_SERVICE_TOKEN` so FastAPI and the worker agree on the internal pipeline token.
+Celery profile services, enabled with `--profile celery`, add `celery-worker`, which runs `celery -A app.workers.celery_app:celery_app worker --loglevel=INFO` against the same FastAPI, PostgreSQL, MinIO, Qdrant, and Redis services. Use `ORCHESTRATOR=celery` and a shared `PIPELINE_SERVICE_TOKEN` so FastAPI and the worker agree on the internal pipeline token.
 
 The built-in Bronze-to-Silver job is Python/PyArrow, not Spark. The Compose Spark service is available to profile-specific external commands but is not used by the default in-repository job. Migrations are not run by FastAPI startup or the image entry point; deployments must run Alembic separately. `GET /health` is process-only and does not probe PostgreSQL, Qdrant, MinIO, Redis, Airflow, or Celery.
 
@@ -602,31 +620,31 @@ Optional provider settings:
 | `docker-compose.yml` | Starts Next.js, Postgres, Qdrant, MinIO, Redis, FastAPI, and optional `airflow` / `celery` profiles |
 | `scripts/init_minio.sh` | Creates local MinIO buckets |
 | `backend/alembic.ini`, `backend/alembic/` | Reversible production schema migration and autogenerate metadata integration |
-| `backend/create_tables.py` | Legacy/development helper for creating missing tables directly from metadata |
-| `backend/reset_dev_db.py` | Destructively deletes Qdrant collections and rebuilds DB tables |
-| `backend/seed_control_plane.py` | Idempotently creates one complete namespaced control-plane graph |
-| `backend/validate_control_plane.py` | Introspects the migrated database and reports the Task 22 structural checklist |
-| `backend/check_data.py` | Helper for inspecting indexed Qdrant data |
-| `backend/cleanup.py` | Helper for deleting document chunks from Qdrant |
+| `backend/scripts/create_tables.py` | Legacy/development helper for creating missing tables directly from metadata |
+| `backend/scripts/reset_dev_db.py` | Destructively deletes Qdrant collections and rebuilds DB tables |
+| `backend/scripts/seed_control_plane.py` | Idempotently creates one complete namespaced control-plane graph |
+| `backend/scripts/validate_control_plane.py` | Introspects the migrated database and reports the Task 22 structural checklist |
+| `backend/scripts/check_data.py` | Helper for inspecting indexed Qdrant data |
+| `backend/scripts/cleanup.py` | Helper for deleting document chunks from Qdrant |
 | `test_chunkers.sh` | End-to-end smoke test using `Rapport_de_stage_bac+3.pdf` |
-| `backend/tests/test_chunker_registry.py` | Registry metadata and lightweight import tests |
-| `backend/tests/test_chunkers_api.py` | `/chunkers` and invalid chunker API tests when FastAPI is installed |
-| `backend/tests/test_auth_validation.py` | Registration/profile validation and organization-reference checks |
-| `backend/tests/test_frontend_control_plane_api.py` | Frontend-facing organization, project, and document API behavior |
-| `backend/tests/test_embedding_backends.py` | FastEmbed selection and deterministic offline embedding behavior |
-| `backend/tests/test_control_plane_models.py` | Tasks 4–11 table, foreign-key, status, uniqueness, and composite-index tests |
-| `backend/tests/test_control_plane_database.py` | Tasks 21–22 isolated PostgreSQL seed, constraint, relationship, lifecycle, schema, and migration tests |
-| `backend/tests/test_control_plane_runtime.py` | Repository transitions, retry/recovery, seeding, and schema-validation behavior |
-| `backend/tests/test_realtime_streaming.py` | Task 23 SSE, replay, fallback, ownership, token, disconnect, heartbeat, and optional live Redis tests |
-| `backend/tests/test_pipeline_artifacts.py` | Task 25 deterministic Silver/Gold Parquet, retry, empty input, and embedding mismatch tests |
-| `backend/tests/test_ingestion_planner.py` | Adaptive technique classification, profiles, resource classes, batch sizes, and concurrency hints |
-| `backend/tests/test_ingestion_execution.py` | Profile-specific command selection, generic fallback, and worker environment propagation |
-| `backend/tests/test_airflow_service.py` | Airflow REST authentication, DAG trigger, and durable run-ID handling |
-| `backend/tests/test_celery_orchestration.py` | Orchestrator selection, Celery enqueue behavior, shared stage transitions, and worker entry-point loading |
-| `backend/tests/test_airflow_benchmark.py` | Airflow benchmark workload, validation, metric, and timestamp handling tests |
-| `backend/tests/test_celery_benchmark.py` | Celery benchmark workload, validation, metric, and timestamp handling tests |
-| `backend/tests/test_qdrant_chunk_lineage.py` | Deterministic point/chunk identity and idempotent version indexing |
-| `backend/tests/test_rag_observability.py` | Query/retrieval logging, Redis cache behavior, and structured retrieval hits |
+| `backend/tests/unit/chunking/test_chunker_registry.py` | Registry metadata and lightweight import tests |
+| `backend/tests/unit/chunking/test_chunkers_api.py` | `/chunkers` and invalid chunker API tests when FastAPI is installed |
+| `backend/tests/unit/models/test_auth_validation.py` | Registration/profile validation and organization-reference checks |
+| `backend/tests/unit/api/test_frontend_control_plane_api.py` | Frontend-facing organization, project, and document API behavior |
+| `backend/tests/unit/embeddings/test_embedding_backends.py` | FastEmbed selection and deterministic offline embedding behavior |
+| `backend/tests/unit/models/test_control_plane_models.py` | Tasks 4–11 table, foreign-key, status, uniqueness, and composite-index tests |
+| `backend/tests/integration/postgres/test_control_plane_database.py` | Tasks 21–22 isolated PostgreSQL seed, constraint, relationship, lifecycle, schema, and migration tests |
+| `backend/tests/integration/postgres/test_control_plane_runtime.py` | Repository transitions, retry/recovery, seeding, and schema-validation behavior |
+| `backend/tests/integration/streaming/test_realtime_streaming.py` | Task 23 SSE, replay, fallback, ownership, token, disconnect, heartbeat, and optional live Redis tests |
+| `backend/tests/unit/ingestion/test_pipeline_artifacts.py` | Task 25 deterministic Silver/Gold Parquet, retry, empty input, and embedding mismatch tests |
+| `backend/tests/unit/ingestion/test_ingestion_planner.py` | Adaptive technique classification, profiles, resource classes, batch sizes, and concurrency hints |
+| `backend/tests/unit/ingestion/test_ingestion_execution.py` | Profile-specific command selection, generic fallback, and worker environment propagation |
+| `backend/tests/integration/airflow/test_airflow_service.py` | Airflow REST authentication, DAG trigger, and durable run-ID handling |
+| `backend/tests/integration/celery/test_celery_orchestration.py` | Orchestrator selection, Celery enqueue behavior, shared stage transitions, and worker entry-point loading |
+| `backend/tests/benchmarks/test_airflow_benchmark.py` | Airflow benchmark workload, validation, metric, and timestamp handling tests |
+| `backend/tests/benchmarks/test_celery_benchmark.py` | Celery benchmark workload, validation, metric, and timestamp handling tests |
+| `backend/tests/integration/qdrant/test_qdrant_chunk_lineage.py` | Deterministic point/chunk identity and idempotent version indexing |
+| `backend/tests/unit/api/test_rag_observability.py` | Query/retrieval logging, Redis cache behavior, and structured retrieval hits |
 | `backend/tests/e2e/test_control_plane.py` | Task 26 Airflow-backed containerized upload-to-answer, lineage, Redis recovery, failure, and tenant-isolation tests |
 | `scripts/e2e_v2.sh` | Isolated one-command Task 26 Compose orchestrator |
 | `frontend/src/**/*.test.tsx` | Task 27 loading, empty, success, failure, SSE parsing, and reconnect tests |
@@ -637,7 +655,7 @@ Optional provider settings:
 
 ## Current Design Notes
 
-- Alembic is the production schema path. Revision `20260711_0001` upgrades an empty database to the full schema and downgrades cleanly; `create_tables.py` remains a development compatibility helper.
+- Alembic is the production schema path. Revision `20260711_0001` upgrades an empty database to the full schema and downgrades cleanly; `backend/scripts/create_tables.py` remains a development compatibility helper.
 - Qdrant is the vector store; Postgres stores control-plane ownership, version/run lineage, chunk metadata, and query/retrieval audit metadata.
 - FastEmbed handles both default dense embeddings and BM25 sparse vectors.
 - R2/S3 storage is used only for optional multimodal PDF page images.
