@@ -1,9 +1,6 @@
 """Compatibility Celery worker entrypoint.
 
 Run with:
-    celery -A worker worker --loglevel=INFO
-
-Prefer:
     celery -A app.workers.celery_app:celery_app worker --loglevel=INFO
 """
 

@@ -1517,14 +1517,14 @@ Verify the database schema works before connecting the full platform.
 ## Implementation Status — Complete (2026-07-13)
 
 `backend/scripts/seed_control_plane.py` creates a deterministic, idempotent graph that
-includes every control-plane table. The `backend/tests/test_control_plane_database.py`
+includes every control-plane table. The `backend/tests/integration/postgres/test_control_plane_database.py`
 suite runs against a protected database whose name must end in `_test`; it
 validates the relationships and rejection cases above using PostgreSQL rather
 than mocks.
 
 ```bash
 cd backend
-RUN_DATABASE_TESTS=1 python -m unittest tests.test_control_plane_database -v
+RUN_DATABASE_TESTS=1 python -m unittest tests.integration.postgres.test_control_plane_database -v
 ```
 
 ---

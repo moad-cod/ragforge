@@ -649,7 +649,7 @@ Optional provider settings:
 | `scripts/e2e_v2.sh` | Isolated one-command Task 26 Compose orchestrator |
 | `frontend/src/**/*.test.tsx` | Task 27 loading, empty, success, failure, SSE parsing, and reconnect tests |
 | `.github/workflows/frontend.yml` | Frontend lint, test, and production-build gate |
-| `backend/tests/evaluate.py` | Evaluation helper for local experiments |
+| `backend/evaluation/legacy/evaluate_legacy_ragas.py` | Legacy evaluation helper for local experiments |
 | `backend/evaluation/airflow_benchmark/` | Airflow benchmark CLI and report package |
 | `backend/evaluation/celery_benchmark/` | Celery benchmark CLI and report package |
 
