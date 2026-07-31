@@ -1,31 +1,9 @@
-"""Create deterministic development data for the RAGForge control plane."""
+"""Compatibility wrapper for ``python seed_control_plane.py``.
 
-import argparse
-import asyncio
+Prefer ``python -m scripts.seed_control_plane`` from the backend directory.
+"""
 
-from app.core.db import AsyncSessionLocal
-from app.services.control_plane_seed import seed_control_plane
-
-
-async def seed(namespace: str) -> None:
-    async with AsyncSessionLocal() as db:
-        result = await seed_control_plane(db, namespace=namespace)
-        await db.commit()
-
-    print(f"Seeded control-plane namespace: {namespace}")
-    for field, value in vars(result).items():
-        print(f"{field}={value}")
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--namespace",
-        default="development",
-        help="Stable namespace used to derive repeatable IDs (default: development)",
-    )
-    args = parser.parse_args()
-    asyncio.run(seed(args.namespace))
+from scripts.seed_control_plane import main
 
 
 if __name__ == "__main__":

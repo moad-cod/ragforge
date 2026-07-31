@@ -1,21 +1,10 @@
-import asyncio
-from app.core.db import engine, Base
-from app.models.tables import (
-    Chunk,
-    Document,
-    DocumentVersion,
-    EmbeddingRun,
-    IngestionRun,
-    Organization,
-    Project,
-    QueryLog,
-    RetrievalLog,
-    User,
-)
+"""Compatibility wrapper for ``python create_tables.py``.
 
-async def main():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    print("✅ Missing tables created")
+Prefer ``python -m scripts.create_tables`` from the backend directory.
+"""
 
-asyncio.run(main())
+from scripts import create_tables
+
+
+if __name__ == "__main__":
+    create_tables.main()
