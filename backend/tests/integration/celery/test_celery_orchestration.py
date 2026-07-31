@@ -57,7 +57,7 @@ class IngestionOrchestratorTests(unittest.TestCase):
 
 class CeleryIngestionTests(unittest.IsolatedAsyncioTestCase):
     async def test_enqueue_publishes_workflow_and_marks_run_queued(self):
-        from app.services import celery_ingestion
+        from app.workers import tasks as celery_tasks
 
         db = SimpleNamespace(commit=AsyncMock())
 
@@ -65,24 +65,24 @@ class CeleryIngestionTests(unittest.IsolatedAsyncioTestCase):
             patch.object(settings, "CELERY_BROKER_URL", "redis://redis:6379/1"),
             patch.object(settings, "CELERY_TASK_ALWAYS_EAGER", False),
             patch.object(
-                celery_ingestion,
+                celery_tasks,
                 "build_ingestion_workflow",
                 Mock(return_value=_Workflow()),
             ) as build_workflow,
             patch(
-                "app.services.celery_ingestion.AsyncSessionLocal",
+                "app.workers.tasks.AsyncSessionLocal",
                 side_effect=lambda: _DatabaseContext(db),
             ),
             patch(
-                "app.services.celery_ingestion.update_ingestion_status",
+                "app.workers.tasks.update_ingestion_status",
                 AsyncMock(),
             ) as update_status,
             patch(
-                "app.services.celery_ingestion.publish_ingestion_event",
+                "app.workers.tasks.publish_ingestion_event",
                 AsyncMock(),
             ) as publish_event,
         ):
-            result = await celery_ingestion.enqueue_ingestion("run-id")
+            result = await celery_tasks.enqueue_ingestion("run-id")
 
         self.assertEqual(result, "celery-workflow-id")
         build_workflow.assert_called_once_with("run-id")
@@ -100,14 +100,14 @@ class CeleryIngestionTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_enqueue_is_disabled_without_broker_unless_eager(self):
-        from app.services import celery_ingestion
+        from app.workers import tasks as celery_tasks
 
         with (
             patch.object(settings, "CELERY_BROKER_URL", ""),
             patch.object(settings, "CELERY_TASK_ALWAYS_EAGER", False),
-            patch.object(celery_ingestion, "build_ingestion_workflow") as build_workflow,
+            patch.object(celery_tasks, "build_ingestion_workflow") as build_workflow,
         ):
-            result = await celery_ingestion.enqueue_ingestion("run-id")
+            result = await celery_tasks.enqueue_ingestion("run-id")
 
         self.assertIsNone(result)
         build_workflow.assert_not_called()

@@ -1,7 +1,7 @@
 """PostgreSQL integration coverage for Control Plane Tasks 21 and 22.
 
 Run with:
-    RUN_DATABASE_TESTS=1 python -m unittest tests.test_control_plane_database -v
+    RUN_DATABASE_TESTS=1 python -m unittest tests.integration.postgres.test_control_plane_database -v
 """
 
 import asyncio

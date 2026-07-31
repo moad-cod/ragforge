@@ -1,0 +1,1 @@
+"""Celery integration tests."""
