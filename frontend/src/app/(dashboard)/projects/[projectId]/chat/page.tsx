@@ -6,5 +6,5 @@ export default async function ChatPage({
   params: Promise<{projectId: string}>;
 }) {
   const {projectId} = await params;
-  redirect(`/projects/${projectId}/documents`);
+  redirect(`/projects/${projectId}/playground`);
 }

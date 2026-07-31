@@ -1,4 +1,4 @@
-import {WorkspaceEntry} from "@/components/workspace/workspace-entry";
+import {redirect} from "next/navigation";
 
 export default async function DocumentsPage({
   params,
@@ -6,5 +6,5 @@ export default async function DocumentsPage({
   params: Promise<{projectId: string}>;
 }) {
   const {projectId} = await params;
-  return <WorkspaceEntry projectId={projectId} />;
+  redirect(`/projects/${projectId}/sources`);
 }
