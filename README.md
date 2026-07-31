@@ -1,182 +1,269 @@
 # RAGForge
 
-RAGForge is a FastAPI SaaS backend for multi-tenant Retrieval-Augmented Generation. It supports authenticated users, projects, document ingestion, professional chunking modes, Qdrant vector search, and OpenAI-compatible LLM providers.
+> From document ingestion to grounded answers: build, trace, and evaluate the complete RAG lifecycle.
 
-## Features
+[![Frontend](https://github.com/moad-cod/RAGForge/actions/workflows/frontend.yml/badge.svg)](https://github.com/moad-cod/RAGForge/actions/workflows/frontend.yml)
+[![Control Plane E2E](https://github.com/moad-cod/RAGForge/actions/workflows/control-plane-e2e.yml/badge.svg)](https://github.com/moad-cod/RAGForge/actions/workflows/control-plane-e2e.yml)
 
-- Multi-tenant JWT authentication.
-- Project and document CRUD with ownership checks.
-- File, URL, Google Drive, and multimodal PDF ingestion.
-- SaaS-style chunker registry exposed through `GET /chunkers`.
-- Text chunkers: fixed-size, paragraph, sentence, semantic, hierarchical, late chunking, proposition.
-- Multimodal PDF page ingestion with Qdrant multivectors and Cloudflare R2 images.
-- Dense+sparse Qdrant indexing and hybrid retrieval.
-- Optional cross-encoder reranking.
-- Gemini and Groq query providers.
-- Local BGE embeddings with lazy model loading.
-- Development reset and smoke-test scripts.
-- Alembic-managed PostgreSQL control-plane schema and repository layer.
-- Asynchronous file landing in MinIO Bronze with durable ingestion-run status.
-- Durable query and ranked retrieval observability with best-effort Redis caching.
-- Authenticated ingestion progress SSE and token-by-token RAG query streaming.
-- Next.js control-plane UI for projects, uploads, live ingestion, streaming chat,
-  query history, and ranked retrieval traces.
+RAGForge is a production-oriented RAG engineering platform for document ingestion, configurable chunking, retrieval, grounded AI chat, source tracing, and reproducible evaluation.
 
-## Tech Stack
+It is built for people who want to inspect the whole RAG system, not just demo a file upload and a chat box. The repository includes a FastAPI control plane, a Next.js UI, PostgreSQL metadata, MinIO Bronze/Silver/Gold artifacts, Qdrant vector search, Redis-backed realtime helpers, hosted LLM providers, and comparable Airflow/Celery ingestion paths.
 
-| Layer | Technology |
-|---|---|
-| Frontend | Next.js App Router, React, TypeScript, Tailwind CSS |
-| Frontend state | TanStack Query, React Hook Form, Zod |
-| API | FastAPI |
-| Database | PostgreSQL, SQLAlchemy async, asyncpg |
-| Vector DB | Qdrant |
-| Dense embeddings | `BAAI/bge-small-en-v1.5` via sentence-transformers |
-| Sparse retrieval | FastEmbed BM25 |
-| Reranking | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
-| LLM providers | Gemini OpenAI-compatible API, Groq OpenAI-compatible API |
-| Multimodal | ColQwen2 / ColPali-style page embeddings |
-| Object storage | Cloudflare R2 |
-| Parsing | PyMuPDF, python-docx, openpyxl, python-pptx, BeautifulSoup |
-| Auth | JWT with `python-jose`, bcrypt |
+**Strongest verified capabilities**
 
-## Project Structure
+- Tenant-aware user and project isolation with JWT auth and project ownership checks.
+- Durable file ingestion through MinIO, PostgreSQL ingestion runs, and Airflow or Celery orchestration.
+- Configurable text chunking, dense embeddings, sparse BM25 vectors, and hybrid Qdrant retrieval.
+- Streaming RAG answers through Gemini or Groq, with persisted query history and retrieval traces.
+- Next.js control-plane UI for projects, sources, ingestion status, playground chat, observability, and settings.
+- Airflow-versus-Celery ingestion benchmarking with JSON and Markdown artifacts.
+
+**Quick links:** [Docker Quick Start](#docker-quick-start) | [Architecture](#architecture) | [Evaluation](#evaluation-and-experiments) | [Project Map](PROJECT_MAP.md) | [Backend Map](backend/BACKEND_MAP.md)
+
+## Project Status
+
+RAGForge is an active engineering project. The default runtime focuses on text RAG. Some heavier paths are intentionally optional or incomplete so the core stack stays practical for local development.
+
+| Capability | Status | Notes |
+| --- | --- | --- |
+| Auth, projects, documents, query history | Implemented | JWT auth, ownership-scoped projects, soft deletes, durable query logs. |
+| Durable file ingestion | Implemented | File upload lands raw data in MinIO Bronze, then writes Silver/Gold artifacts and Qdrant indexes. |
+| Airflow ingestion orchestration | Implemented | Docker profile and DAG trigger the shared pipeline jobs. |
+| Celery ingestion orchestration | Implemented | Docker profile and worker tasks run the same shared pipeline stages. |
+| Dense and hybrid retrieval | Implemented | FastEmbed dense vectors plus BM25 sparse vectors in Qdrant. |
+| Streaming answers | Implemented | SSE query stream emits stages and generated tokens. |
+| Source tracing | Implemented | Query logs store ranked retrieval records linked back to chunks and document versions. |
+| Redis query cache and ingestion events | Implemented | Best-effort cache and event replay; PostgreSQL remains authoritative. |
+| Cross-encoder reranking | Experimental | Code path exists, but heavy reranker dependencies are not in the default backend requirements. |
+| Multimodal PDF ingestion/query | Experimental | Uses R2 image storage and a separate multimodal collection when configured. |
+| BEIR/SciFact retrieval evaluation | In progress | A SciFact config and legacy metrics exist; no verified BEIR runner command is currently documented. |
+| Organization membership and roles | Planned | Organization records exist, but role/member enforcement is not complete. |
+| Local generation through Ollama | Planned | Hosted Gemini/Groq generation is implemented; Ollama is not wired into the current config. |
+
+## Screenshots And Demo
+
+No current UI screenshot or demo video is tracked in the repository. Architecture images are available under [`docs/architecture/`](docs/architecture/), including the system design, data model, and document lifecycle diagrams.
+
+## Why RAGForge?
+
+Many RAG examples stop after uploading a document and asking a question. RAGForge focuses on the engineering lifecycle around that interaction:
+
+- **Durable ingestion:** raw uploads, parsed chunks, embedded chunks, indexing state, and retries are represented as explicit records and artifacts.
+- **Configurable processing:** chunkers are exposed through a backend registry and selectable from the frontend.
+- **Traceable retrieval:** ranked evidence records persist query-to-chunk lineage, scores, retrieval strategy, document version, and source text.
+- **Observable operations:** ingestion runs stream progress through SSE and can recover state from PostgreSQL.
+- **Comparable orchestration:** Airflow and Celery use the same shared ingestion stages so their performance can be benchmarked fairly.
+
+## Core Capabilities
+
+### Implemented
+
+- User registration, login, profile update, and JWT-protected API routes.
+- Project CRUD with per-user ownership checks and one Qdrant collection per project.
+- Document listing, document details, version history, and soft deletion.
+- File ingestion for PDF, DOCX, XLSX, PPTX, CSV, HTML/HTM, Markdown, and text.
+- URL and Google Drive ingestion through synchronous paths.
+- Chunker registry with fixed-size, paragraph, sentence, semantic, hierarchical, late-chunking, and proposition strategies.
+- MinIO Bronze/Silver/Gold object storage for durable file ingestion artifacts.
+- Qdrant dense and sparse vector indexing with project/document payload filters.
+- Gemini and Groq chat-completion providers through OpenAI-compatible clients.
+- Query response caching, query history, retrieval trace inspection, and SSE streaming.
+- Docker Compose profiles for core services, Airflow, and Celery.
+
+### Experimental Or Optional
+
+- Cross-encoder reranking with `cross-encoder/ms-marco-MiniLM-L-6-v2`.
+- Multimodal PDF page ingestion and multimodal querying with Cloudflare R2 image storage.
+- Legacy RAGAS-style evaluation scripts in `backend/evaluation/legacy/`.
+
+### Planned Or In Progress
+
+- Full organization membership and role authorization.
+- BEIR/SciFact retrieval-quality runner for reproducible Recall, Precision, MRR, and NDCG metrics.
+- Local LLM generation through Ollama or another local runtime.
+- First-class experiment records exposed through the frontend.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    UI[Next.js UI] --> API[FastAPI control plane]
+    API --> PG[(PostgreSQL metadata)]
+    API --> Redis[(Redis cache and events)]
+    API --> Qdrant[(Qdrant vectors)]
+    API --> LLM[Gemini or Groq]
+
+    Upload[Document upload] --> API
+    API --> MinIO[(MinIO Bronze/Silver/Gold)]
+    API --> Orch{ORCHESTRATOR}
+    Orch --> Airflow[Airflow DAG]
+    Orch --> Celery[Celery worker]
+    Airflow --> Jobs[Shared ingestion jobs]
+    Celery --> Jobs
+    Jobs --> MinIO
+    Jobs --> API
+    API --> Qdrant
+
+    Eval[Benchmark CLIs] --> API
+    Eval --> Artifacts[artifacts/benchmark-results]
+```
+
+**Control plane:** FastAPI owns authentication, project/document APIs, ingestion-run state, query history, retrieval logs, and internal pipeline callbacks.
+
+**Ingestion/data plane:** File uploads land in MinIO Bronze. Airflow or Celery then runs the shared Bronze-to-Silver, Silver-to-Gold, Qdrant upsert, and finalize stages. PostgreSQL remains the authoritative state machine.
+
+**Retrieval and generation path:** Interactive chat enters through FastAPI, embeds the question, retrieves from Qdrant with project/document filters, builds a grounded prompt, calls Gemini or Groq, streams answer tokens, and stores trace records.
+
+**Evaluation path:** Benchmark CLIs drive public API workflows and write generated reports to `artifacts/benchmark-results/`.
+
+## Document Ingestion Lifecycle
+
+The complete durable path is `POST /ingest/file`.
 
 ```text
-backend/
-  app/
-    api/
-      auth.py          # register, login, me
-      chunkers.py      # GET /chunkers metadata
-      documents.py     # document list/get/delete
-      ingest.py        # file/url/gdrive/multimodal ingestion
-      projects.py      # project CRUD
-      query.py         # text and multimodal RAG query
-    core/
-      auth.py          # JWT dependency
-      config.py        # .env settings
-      db.py            # async SQLAlchemy session
-    models/
-      tables.py        # User, Project, Document
-    services/
-      parser.py        # file, URL, Drive parsers
-      embedder.py      # lazy BGE embedder
-      indexer.py       # Qdrant upsert/delete
-      retriever.py     # retrieval entry point
-      retrieval/       # dense/sparse/hybrid/rerank
-      chunkers/        # chunking implementations + registry
-  create_tables.py     # create missing tables
-  reset_dev_db.py      # destructive local reset
-  tests/               # registry/API/evaluation scripts
-frontend/
-  src/app/             # App Router pages and authenticated API proxy
-  src/components/      # control-plane screens and UI primitives
-  src/hooks/           # ingestion stream recovery
-  src/lib/             # typed API, SSE parser, shared types
-docker-compose.yml     # frontend + FastAPI + Postgres + Qdrant + MinIO + Redis
-test_chunkers.sh       # end-to-end smoke test
-PROJECT_MAP.md         # architecture and design map
+Upload
+  -> validate ownership, file type, size, and chunker
+  -> write raw bytes to MinIO Bronze
+  -> create DocumentVersion and IngestionRun in PostgreSQL
+  -> enqueue Airflow DAG or Celery chain
+  -> parse and chunk into Silver Parquet
+  -> embed into Gold Parquet
+  -> upsert deterministic points into Qdrant
+  -> update chunk lineage, version status, and ingestion status
+  -> stream progress over SSE
 ```
 
-## Setup
+URL, Google Drive, and multimodal ingestion are also present, but they do not currently provide the same full Bronze/Silver/Gold lineage as durable file ingestion.
 
-### 1. Start infrastructure
+## Query And Answer Lifecycle
+
+```text
+Question
+  -> authenticate user
+  -> verify project ownership and optional document scope
+  -> normalize/cache lookup
+  -> embed query
+  -> hybrid Qdrant retrieval with payload filtering
+  -> optional reranking when dependencies are available
+  -> prompt construction from retrieved context
+  -> Gemini or Groq generation
+  -> SSE token streaming
+  -> query log and retrieval trace persistence
+```
+
+Retrieval traces include rank, Qdrant score, optional rerank score, retrieval strategy, chunk ID, document ID, document version ID, chunk text, and whether the evidence was used in the answer.
+
+## Technology Stack
+
+| Layer | Technology | Responsibility |
+| --- | --- | --- |
+| Frontend | Next.js App Router, React, TypeScript | Auth pages, dashboard, project workspace, chat, history, observability. |
+| Frontend data | TanStack Query, typed API helpers, SSE parser | Same-origin authenticated proxy, caching, streaming handling. |
+| API/control plane | FastAPI, Pydantic, SQLAlchemy async | HTTP routes, auth, orchestration boundary, query execution. |
+| Metadata database | PostgreSQL, Alembic | Users, projects, documents, versions, ingestion runs, chunks, query logs. |
+| Vector database | Qdrant | Dense and sparse vectors with project/document payload filters. |
+| Object storage | MinIO | Bronze raw files, Silver chunk artifacts, Gold embedded artifacts. |
+| Cache/events | Redis | Best-effort query cache and replayable ingestion events. |
+| Orchestration | Airflow 3.3 or Celery 5.6 | Durable file-ingestion execution. |
+| Embeddings | FastEmbed, `BAAI/bge-small-en-v1.5`, BM25 sparse embeddings | Text embedding and sparse retrieval features. |
+| LLM providers | Gemini, Groq | Hosted answer generation through OpenAI-compatible chat APIs. |
+| Containers | Docker Compose | Local core stack plus optional Airflow and Celery profiles. |
+| Testing | unittest, Vitest, Playwright, Compose config validation | Backend, frontend, integration, e2e, and benchmark checks. |
+
+## Docker Quick Start
+
+Requirements: Docker, Docker Compose, and a copy of `.env.example`.
 
 ```bash
-docker compose up -d
+cp .env.example .env
+docker compose up -d --build
+docker compose exec fastapi alembic upgrade head
 ```
-
-This starts the Next.js UI, PostgreSQL, Qdrant, MinIO, Redis, and FastAPI.
 
 Open:
 
-- RAGForge UI: `http://localhost:3000`
+- Frontend: `http://localhost:3000`
 - FastAPI docs: `http://localhost:8000/docs`
+- Qdrant: `http://localhost:6333/dashboard`
+- MinIO console: `http://localhost:9001`
 
-### 2. Install backend dependencies
+The base stack starts the frontend, FastAPI, PostgreSQL, Qdrant, MinIO, Redis, and MinIO bucket initialization. Set `GEMINI_API_KEY` or `GROQ_API_KEY` in `.env` before asking hosted-model questions.
+
+### Airflow Profile
+
+Use this when you want uploads to trigger the Airflow ingestion DAG.
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Set the generated value as `PIPELINE_SERVICE_TOKEN` in `.env`, then configure:
+
+```dotenv
+ORCHESTRATOR=airflow
+AIRFLOW_API_URL=http://airflow-apiserver:8080
+AIRFLOW_USERNAME=admin
+AIRFLOW_API_JWT_SECRET=replace-with-a-random-airflow-jwt-secret
+PIPELINE_SERVICE_TOKEN=replace-with-a-random-internal-token
+```
+
+Also set `AIRFLOW_PASSWORD` to the local Airflow admin password you want to use.
+
+Start the profile:
+
+```bash
+docker compose --profile airflow up -d --build
+docker compose exec fastapi alembic upgrade head
+```
+
+Open Airflow at `http://localhost:8080`.
+
+### Celery Profile
+
+Use this when you want uploads to trigger Celery workers instead of Airflow.
+
+```dotenv
+ORCHESTRATOR=celery
+PIPELINE_SERVICE_TOKEN=replace-with-the-same-token-for-api-and-worker
+```
+
+Start the profile:
+
+```bash
+docker compose --profile celery up -d --build
+docker compose exec fastapi alembic upgrade head
+```
+
+The worker entry point is:
+
+```bash
+celery -A app.workers.celery_app:celery_app worker --loglevel=INFO
+```
+
+## Local Development
+
+### Backend
 
 ```bash
 cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 3. Configure environment
-
-Create `backend/.env` from the root `.env.example` values:
-
-```dotenv
-DATABASE_URL=postgresql+asyncpg://ragforge:ragforge@localhost:5432/ragforge
-SECRET_KEY=replace-with-a-random-secret
-
-QDRANT_URL=http://localhost:6333
-QDRANT_API_KEY=
-
-REDIS_URL=redis://localhost:6379/0
-QUERY_CACHE_TTL_SECONDS=300
-EVENT_STREAM_MAXLEN=512
-EVENT_STREAM_TTL_SECONDS=3600
-SSE_HEARTBEAT_SECONDS=15
-SSE_POLL_SECONDS=1
-
-GEMINI_API_KEY=
-GROQ_API_KEY=
-
-R2_ACCOUNT_ID=
-R2_ACCESS_KEY_ID=
-R2_SECRET_ACCESS_KEY=
-R2_BUCKET_NAME=
-R2_PUBLIC_URL=
-
-DEBUG_RETURN_CONTEXT=false
-MAX_UPLOAD_BYTES=26214400
-MAX_MULTIMODAL_PAGES=50
-```
-
-Generate a secret key:
-
-```bash
-python -c "import secrets; print(secrets.token_hex(32))"
-```
-
-### 4. Apply database migrations
-
-```bash
-cd backend
 alembic upgrade head
-```
-
-`create_tables.py` remains available only as a development compatibility helper. For a database previously created directly from SQLAlchemy metadata, use a fresh development reset or verify the schema before stamping the Alembic revision.
-
-Create one complete, repeatable development dataset and validate the migrated
-schema:
-
-```bash
-python seed_control_plane.py --namespace development
-python validate_control_plane.py
-```
-
-The seed command is idempotent for each namespace. Use a different namespace
-when you want an additional independent example project.
-
-For a fresh destructive local reset of PostgreSQL tables and Qdrant collections:
-
-```bash
-cd backend
-python reset_dev_db.py
-```
-
-### 5. Run the API
-
-```bash
-cd backend
 uvicorn app.main:app --reload
 ```
 
-API docs: `http://localhost:8000/docs`
+Development utilities:
 
-For frontend-only development:
+```bash
+python -m scripts.seed_control_plane --namespace development
+python -m scripts.validate_control_plane
+python -m scripts.reset_dev_db
+```
+
+`reset_dev_db` is destructive and intended only for local development.
+
+### Frontend
 
 ```bash
 cd frontend
@@ -184,301 +271,233 @@ npm install
 npm run dev
 ```
 
-The browser talks to the same-origin Next.js proxy. The proxy stores the
-FastAPI JWT in an HttpOnly cookie and forwards authenticated requests and SSE
-streams to `BACKEND_URL`. Set `AUTH_COOKIE_SECURE=true` when deployed behind
-HTTPS; local Compose intentionally keeps it false.
+The frontend talks to FastAPI through `frontend/src/app/api/backend/[...path]/route.ts`. Authentication uses an HttpOnly session cookie; JWTs are not exposed to browser JavaScript.
 
-### 6. Start Airflow 3.3 and Spark (optional)
+## Configuration
 
-The `batch` profile runs the Airflow 3 API server/new UI, scheduler, DAG
-processor, triggerer, metadata database, and Spark. In the root `.env`, set:
+Use `.env.example` as the source of truth. Important variables:
 
-```dotenv
-AIRFLOW_API_URL=http://airflow-apiserver:8080
-AIRFLOW_USERNAME=admin
-AIRFLOW_PASSWORD=admin
-AIRFLOW_API_JWT_SECRET=replace-with-a-random-airflow-jwt-secret
-PIPELINE_SERVICE_TOKEN=replace-with-a-random-internal-token
-```
+| Group | Variable | Required | Purpose |
+| --- | --- | --- | --- |
+| App | `SECRET_KEY` | Yes | JWT signing secret. Generate a random value for every environment. |
+| App | `FRONTEND_PORT` | No | Frontend port for Docker Compose. |
+| Auth | `AUTH_COOKIE_SECURE` | Production | Set to `true` behind HTTPS. |
+| PostgreSQL | `DATABASE_URL` | Yes | Main async SQLAlchemy database URL. |
+| PostgreSQL tests | `TEST_DATABASE_URL`, `RUN_DATABASE_TESTS` | Optional | Enables isolated DB integration tests. |
+| Qdrant | `QDRANT_URL`, `QDRANT_API_KEY` | Yes/optional | Vector database endpoint and optional API key. |
+| Redis | `REDIS_URL` | Optional | Query cache and ingestion event replay. |
+| Redis | `QUERY_CACHE_TTL_SECONDS`, `EVENT_STREAM_*`, `SSE_*` | Optional | Cache TTL and SSE replay/heartbeat behavior. |
+| MinIO | `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` | Yes for durable file ingestion | S3-compatible artifact storage. Rotate development defaults outside local use. |
+| MinIO | `MINIO_BUCKET_BRONZE`, `MINIO_BUCKET_SILVER`, `MINIO_BUCKET_GOLD` | Yes | Data-lake bucket names. |
+| LLM | `GEMINI_API_KEY`, `GROQ_API_KEY` | Required per provider | Hosted generation credentials. |
+| LLM | `GEMINI_BASE_URL`, `GROQ_BASE_URL`, `LLM_*` | Optional | Provider base URLs, retries, and timeout. |
+| Embeddings | `EMBEDDING_BACKEND` | Optional | `fastembed` for runtime, `deterministic` for offline tests. |
+| Orchestration | `ORCHESTRATOR` | Optional | `airflow`, `celery`, or disabled by using another value. |
+| Airflow | `AIRFLOW_API_URL`, `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`, `AIRFLOW_INGESTION_DAG_ID` | Required for Airflow trigger | FastAPI-to-Airflow REST trigger settings. |
+| Celery | `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CELERY_TASK_*` | Required for Celery trigger | Worker broker, results, retry, eager, and prefetch settings. |
+| Pipeline | `PIPELINE_SERVICE_TOKEN` | Required for orchestrated ingestion | Internal bearer token for Airflow/Celery callbacks. |
+| Multimodal | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_URL` | Optional | Required only for `/ingest/multimodal`. |
 
-Then start the profile:
+## Usage Example
+
+1. Start the Docker stack and run migrations.
+2. Register or sign in at `http://localhost:3000`.
+3. Create a project.
+4. Upload a supported document and select a chunker.
+5. Watch the ingestion run progress from upload through indexing.
+6. Ask a question in the project playground.
+7. Open citations or the retrieval trace to inspect the supporting chunks and scores.
+
+Minimal health check:
 
 ```bash
-docker compose --profile batch up -d
+curl http://localhost:8000/health
 ```
 
-Open the Airflow UI at `http://localhost:8080` and sign in with the configured
-Airflow username and password. Check initialization and scheduler health with:
+The full authenticated API is easier to explore through `http://localhost:8000/docs`.
 
-```bash
-docker compose --profile batch ps
-docker compose logs airflow-init airflow-apiserver airflow-scheduler airflow-dag-processor
-```
+## API Overview
 
-`airflow-init` exiting successfully is expected. Existing Airflow 2 development
-metadata may need a fresh `airflow_postgres_data` volume if its major-version
-migration is not usable; this does not affect the main RAGForge PostgreSQL
-volume.
+Protected user endpoints require `Authorization: Bearer <JWT>`. The frontend stores that token server-side in an HttpOnly cookie and proxies requests through same-origin routes.
 
-## API Reference
+| Area | Routes |
+| --- | --- |
+| Health | `GET /health` |
+| Auth | `POST /auth/register`, `POST /auth/login`, `GET/PATCH/DELETE /auth/me` |
+| Organizations | `POST/GET /organizations/`, `GET/PATCH/DELETE /organizations/{organization_id}` |
+| Projects | `POST/GET /projects/`, `GET/PATCH/DELETE /projects/{project_id}` |
+| Documents | `GET /documents/?project_id=...`, `GET /documents/{document_id}`, `GET /documents/{document_id}/versions`, `DELETE /documents/{document_id}` |
+| Chunkers | `GET /chunkers` |
+| Ingestion | `POST /ingest/file`, `POST /ingest/url`, `POST /ingest/gdrive`, `POST /ingest/multimodal` |
+| Ingestion runs | `GET /ingest/runs`, `GET /ingest/runs/{id}`, `POST /ingest/runs/{id}/retry`, `GET /ingest/runs/{id}/events` |
+| RAG | `POST /rag/query`, `POST /rag/query/stream`, `POST /rag/multimodal-query` |
+| Observability | `GET /rag/projects/{project_id}/history`, `GET /rag/queries/{query_log_id}` |
+| Internal pipeline | `/internal/pipeline/*` routes protected by `PIPELINE_SERVICE_TOKEN` |
 
-### Health
+## Evaluation And Experiments
 
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/health` | API health check |
-
-### Auth
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/auth/register` | Create account |
-| POST | `/auth/login` | Get JWT token |
-| GET | `/auth/me` | Get current user |
-| PATCH | `/auth/me` | Update email or password |
-| DELETE | `/auth/me` | Delete account and owned data |
-
-### Projects
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/projects/` | Create project |
-| GET | `/projects/` | List projects |
-| GET | `/projects/{project_id}` | Get project |
-| PATCH | `/projects/{project_id}` | Rename project |
-| DELETE | `/projects/{project_id}` | Delete project, documents, and Qdrant collections |
-
-### Documents
-
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/documents/?project_id=` | List project documents |
-| GET | `/documents/{document_id}` | Get document |
-| DELETE | `/documents/{document_id}` | Delete document and vector/image artifacts |
-
-### Chunkers
-
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/chunkers` | List public chunking modes and product metadata |
-
-### Ingest
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/ingest/file` | Land a file in Bronze and return an ingestion run (HTTP 202) |
-| GET | `/ingest/runs?project_id=` | List recent tenant-owned project runs |
-| GET | `/ingest/runs/{ingestion_run_id}` | Read durable Bronze/Silver/Gold/Qdrant progress |
-| GET | `/ingest/runs/{ingestion_run_id}/events` | Stream durable progress snapshots and replayable SSE events |
-| POST | `/ingest/runs/{ingestion_run_id}/retry` | Retry a failed run from its durable Bronze object |
-| POST | `/ingest/url` | Scrape and index a public URL |
-| POST | `/ingest/gdrive` | Import and index a Google Drive file |
-| POST | `/ingest/multimodal` | Render, embed, upload, and index PDF pages |
-
-`/ingest/file` multipart fields:
+RAGForge separates tests from experiments:
 
 ```text
-file       PDF, DOCX, XLSX, PPTX, CSV, HTML, MD, TXT
-project_id target project ID
-chunker    fixed_size | paragraph | sentence | semantic | hierarchical | late_chunking | proposition
+backend/tests/
+  verifies implementation correctness
+
+backend/evaluation/
+  contains benchmark runners, configs, metrics, and legacy evaluation scripts
+
+artifacts/benchmark-results/
+  stores generated benchmark reports
 ```
 
-`multimodal` is listed by `GET /chunkers`, but text file ingestion rejects it because it uses `/ingest/multimodal`.
+### Airflow Versus Celery Benchmark
 
-`POST /ingest/file` returns immediately after durable landing:
+These CLIs drive the real FastAPI ingestion endpoint, wait for ingestion runs to finish, validate API-visible gates, and write JSON plus Markdown reports.
 
-```json
-{
-  "document_id": "uuid",
-  "document_version_id": "uuid",
-  "ingestion_run_id": "uuid",
-  "status": "landed"
-}
-```
-
-Set `AIRFLOW_API_URL=http://airflow-apiserver:8080` and `PIPELINE_SERVICE_TOKEN` to enqueue landed runs automatically. FastAPI obtains an Airflow JWT and uses the public Airflow 3 `/api/v2` endpoint. The DAG also requires the three data-plane command variables documented in `.env.example`; missing commands fail the run instead of marking incomplete processing as successful.
-
-### Query
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/rag/query` | Text RAG query |
-| POST | `/rag/query/stream` | Stream RAG stages and answer tokens over SSE |
-| GET | `/rag/projects/{project_id}/history` | List tenant-owned durable query history |
-| GET | `/rag/queries/{query_log_id}` | Read one answer and its ranked retrieval trace |
-| POST | `/rag/multimodal-query` | Page-image multimodal query |
-
-Text query body:
-
-```json
-{
-  "question": "What is in the documents?",
-  "project_id": "project-id",
-  "provider": "gemini",
-  "model": null,
-  "document_id": null,
-  "use_parent_context": false,
-  "include_context": false
-}
-```
-
-## Chunking Modes
-
-The registry in `backend/app/services/chunkers/registry.py` is the single source of truth. It is lightweight and does not import heavy ML models until a chunker is actually called.
-
-| ID | Product Name | Tier | Status | Best For |
-|---|---|---|---|---|
-| `fixed_size` | Starter Chunking | Base | Stable | Testing and predictable chunks |
-| `paragraph` | Base Chunking | Base | Stable | Fast general-purpose ingestion |
-| `sentence` | Precision Chunking | Pro | Stable | Dense text and long paragraphs |
-| `semantic` | Semantic Chunking | Pro | Beta | Meaning-aware retrieval |
-| `hierarchical` | Structured Chunking | Business | Beta | Headings, sections, manuals |
-| `late_chunking` | Late Interaction Chunking | Ultimate | Beta | Premium retrieval quality |
-| `proposition` | Ultimate Chunking | Ultimate | Beta | Highest-accuracy semantic RAG |
-| `multimodal` | Multimodal Chunking | Ultimate | Experimental | Visual PDFs and image-heavy documents |
-
-## Quick Start
+Airflow:
 
 ```bash
-# Register
-curl -s -X POST "http://localhost:8000/auth/register" \
-  -H "Content-Type: application/json" \
-  -d '{"email": "you@example.com", "password": "secret123"}'
-
-# Login
-TOKEN=$(curl -s -X POST "http://localhost:8000/auth/login" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=you@example.com&password=secret123" \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)[\"access_token\"])")
-
-# Create project
-PROJECT_ID=$(curl -s -X POST "http://localhost:8000/projects/" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "my docs"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)[\"project_id\"])")
-
-# List chunking modes
-curl -s "http://localhost:8000/chunkers" | python3 -m json.tool
-
-# Upload file
-curl -X POST "http://localhost:8000/ingest/file" \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@/path/to/file.pdf" \
-  -F "project_id=$PROJECT_ID" \
-  -F "chunker=paragraph"
-
-# Query
-curl -s -X POST "http://localhost:8000/rag/query" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"question\":\"What is in the documents?\",\"project_id\":\"$PROJECT_ID\",\"provider\":\"gemini\"}"
-
-# Stream ingestion progress (use the ingestion_run_id returned by /ingest/file)
-curl -N "http://localhost:8000/ingest/runs/$INGESTION_RUN_ID/events" \
-  -H "Authorization: Bearer $TOKEN"
-
-# Stream query stages and generated tokens
-curl -N -X POST "http://localhost:8000/rag/query/stream" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"question\":\"What is in the documents?\",\"project_id\":\"$PROJECT_ID\",\"provider\":\"gemini\"}"
+PYTHONPATH=backend backend/.venv/bin/python -m evaluation.airflow_benchmark.cli \
+  --api-url http://localhost:8000 \
+  --documents 10 \
+  --concurrency 2 \
+  --chunker paragraph
 ```
 
-Browser clients should use streaming `fetch` so the JWT remains in the
-`Authorization` header. Ingestion reconnects may send `Last-Event-ID`; Redis
-replays retained events when available, otherwise the first PostgreSQL
-snapshot remains authoritative.
+Celery:
 
-## Data Isolation
+```bash
+PYTHONPATH=backend backend/.venv/bin/python -m evaluation.celery_benchmark.cli \
+  --api-url http://localhost:8000 \
+  --documents 10 \
+  --concurrency 2 \
+  --chunker paragraph
+```
 
-Every project belongs to a user. Every document belongs to a project. Qdrant points include `project_id` and `document_id` payloads, and query paths verify project ownership before retrieval.
+Reports are written to:
 
 ```text
-User -> Projects -> Documents -> Qdrant points
+artifacts/benchmark-results/airflow/
+artifacts/benchmark-results/celery/
 ```
 
-Project Qdrant collections are UUID-based, not display-name-based, to avoid cross-tenant collisions.
+The benchmark config at [`backend/evaluation/configs/airflow_vs_celery.yaml`](backend/evaluation/configs/airflow_vs_celery.yaml) tracks ingestion metrics such as end-to-end latency, queue waiting time, processing time, throughput, success rate, recovery time, retry overhead, duplicate processing rate, and scaling efficiency.
 
-## Supported File Types
+### Retrieval Evaluation
 
-| Extension | Parser |
-|---|---|
-| `.pdf` | PyMuPDF |
-| `.docx` | python-docx |
-| `.xlsx` | openpyxl |
-| `.pptx` | python-pptx |
-| `.csv` | csv stdlib |
-| `.html` / `.htm` | BeautifulSoup |
-| `.md` / `.txt` | plain text |
+[`backend/evaluation/configs/scifact.yaml`](backend/evaluation/configs/scifact.yaml) declares a BEIR/SciFact retrieval-evaluation target with Recall, Precision, MRR, and NDCG metrics. The repository does not currently include a verified BEIR runner command, so this is documented as in progress rather than a completed experiment workflow.
 
-## Testing and Development
+Airflow/Celery benchmarks measure orchestration behavior. BEIR-style evaluation measures retrieval quality. Answer-generation evaluation is a separate concern.
 
-Run the registry/unit-style tests:
+## Testing
+
+### Backend
+
+Run from `backend/` after installing `requirements.txt`:
 
 ```bash
-cd backend
-PYTHONPATH=. python -m unittest tests.test_chunker_registry tests.test_chunkers_api -v
+PYTHONPATH=. .venv/bin/python -m unittest discover -s tests/unit -v
+PYTHONPATH=. .venv/bin/python -m unittest discover -s tests/integration -v
+PYTHONPATH=. .venv/bin/python -m unittest discover -s tests/benchmarks -v
 ```
 
-Run the Tasks 21–22 PostgreSQL integration suite:
+Database-backed integration tests require an isolated test database:
 
 ```bash
-cd backend
-RUN_DATABASE_TESTS=1 python -m unittest tests.test_control_plane_database -v
+RUN_DATABASE_TESTS=1 PYTHONPATH=. .venv/bin/python -m unittest discover -s tests/integration/postgres -v
 ```
 
-The suite derives an isolated database named `ragforge_test` from
-`DATABASE_URL`, performs a full Alembic upgrade/rollback/upgrade cycle, tests
-the seed graph and database constraints, then rolls the test schema back. Set
-`TEST_DATABASE_URL` explicitly when a different `_test` database is required.
-
-Run the Task 23 streaming tests and optional live Redis replay test:
-
-```bash
-cd backend
-python -m unittest tests.test_realtime_streaming -v
-RUN_REDIS_TESTS=1 python -m unittest tests.test_realtime_streaming.RedisEventIntegrationTests -v
-```
-
-Run the Task 26 isolated, containerized control-plane suite:
+End-to-end control-plane test:
 
 ```bash
 make e2e-v2
 ```
 
-This command creates a separate `ragforge-e2e` Compose project on alternate
-host ports, migrates a clean PostgreSQL database, and validates:
+### Frontend
 
-- upload through Bronze, Silver, Gold, Airflow, PostgreSQL, and Qdrant;
-- ingestion and query SSE ordering;
-- non-streaming, streaming, and cached answers;
-- query/retrieval logs and deterministic chunk lineage;
-- PostgreSQL recovery while Redis is stopped;
-- durable pipeline and provider failures;
-- cross-tenant access denial.
-
-The mandatory suite uses a local OpenAI-compatible provider and deterministic
-embedding backend, so it does not require paid API credentials or model
-downloads. Normal runtime continues to use FastEmbed and the configured Gemini
-or Groq provider. Set `KEEP_E2E_STACK=1` to retain containers after the run.
-
-Run the full smoke test from the project root:
+Run from `frontend/`:
 
 ```bash
-./test_chunkers.sh
+npm run lint
+npm run test
+npm run typecheck
+npm run build
+npm run test:e2e
 ```
 
-The smoke test uses `Rapport_de_stage_bac+3.pdf`, checks `/chunkers`, ingests the document with all text chunkers, validates invalid chunkers, queries, and cleans up the created project.
+### Compose Validation
 
-Useful toggles:
+Run from the repository root:
 
 ```bash
-RUN_LLM_TESTS=0 ./test_chunkers.sh
-RUN_URL_TEST=1 RUN_GDRIVE_TEST=1 RUN_MULTIMODAL_TEST=1 ./test_chunkers.sh
+docker compose config
+docker compose --profile airflow config
+docker compose --profile celery config
+docker compose -f docker-compose.yml -f docker-compose.e2e.yml --profile airflow config
 ```
 
-## More Detail
+## Security And Tenant Isolation
 
-See `PROJECT_MAP.md` for the architecture map, data flow, module responsibilities, and current design notes.
+Current enforced boundaries:
+
+- JWT authentication for protected user routes.
+- Password hashing with bcrypt.
+- Project and document access checks based on the authenticated user's owned projects.
+- Query authorization before retrieval and generation.
+- Qdrant payload filters for project and optional document scope.
+- Project-specific Qdrant collection names.
+- Tenant-aware MinIO artifact paths containing organization, project, document, and version identifiers.
+- Separate internal pipeline bearer token for Airflow/Celery callbacks.
+- HttpOnly cookie handling in the frontend proxy.
+
+Current limitation: organization CRUD and `organization_id` fields exist, but organization membership and role authorization are not fully enforced. The accurate description today is tenant-aware user and project isolation, not full organization-based multi-tenancy.
+
+## Project Structure
+
+```text
+.
+|-- backend/
+|   |-- app/
+|   |   |-- api/                 # FastAPI routers
+|   |   |-- core/                # settings, auth, database
+|   |   |-- models/              # SQLAlchemy control-plane models
+|   |   |-- repositories/        # PostgreSQL data access
+|   |   |-- services/            # parsing, chunking, storage, retrieval, orchestration
+|   |   `-- workers/             # Celery app and ingestion tasks
+|   |-- airflow/                 # Airflow image, DAGs, plugins
+|   |-- alembic/                 # database migrations
+|   |-- evaluation/              # benchmark CLIs, configs, metrics, legacy scripts
+|   |-- jobs/                    # shared ingestion pipeline stages
+|   |-- scripts/                 # development and validation CLIs
+|   `-- tests/                   # unit, integration, e2e, benchmark tests
+|-- frontend/
+|   `-- src/                     # Next.js app, components, hooks, lib, tests
+|-- docs/                        # architecture, research, reports, plans
+|-- artifacts/                   # generated benchmark/test outputs
+|-- scripts/                     # repository-level helper scripts
+|-- docker-compose.yml
+|-- docker-compose.e2e.yml
+|-- Makefile
+|-- PROJECT_MAP.md
+`-- README.md
+```
+
+## Roadmap
+
+- Enforce organization membership and role-based authorization.
+- Add a verified BEIR/SciFact retrieval runner and artifact format.
+- Expose experiment records and comparisons through backend APIs and the frontend.
+- Add local generation support, such as Ollama, behind explicit configuration.
+- Add current UI screenshots or a short demo video to the repository.
+- Package optional multimodal/reranker dependencies into separate install profiles or images.
+- Harden production deployment docs for TLS, secrets, backups, and object-store credentials.
+
+## Contributing
+
+1. Read [`PROJECT_MAP.md`](PROJECT_MAP.md), [`backend/BACKEND_MAP.md`](backend/BACKEND_MAP.md), and [`frontend/FRONTEND_MAP.md`](frontend/FRONTEND_MAP.md) before making broad changes.
+2. Keep API, frontend, pipeline, and evaluation behavior aligned with the existing maps.
+3. Prefer focused tests for the code path you change.
+4. Do not commit generated benchmark outputs unless they are intentionally being preserved as reference artifacts.
+
+## License
+
+No license file is currently present in the repository. Add a license before publishing, distributing, or reusing this project outside its current owner-controlled context.
