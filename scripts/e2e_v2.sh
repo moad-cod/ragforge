@@ -18,7 +18,7 @@ COMPOSE=(
   --project-name "$PROJECT_NAME"
   --file "$ROOT_DIR/docker-compose.yml"
   --file "$ROOT_DIR/docker-compose.e2e.yml"
-  --profile batch
+  --profile airflow
 )
 
 SERVICES=(

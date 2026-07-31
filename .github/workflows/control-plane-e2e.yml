@@ -33,5 +33,5 @@ jobs:
             --project-name ragforge-e2e \
             --file docker-compose.yml \
             --file docker-compose.e2e.yml \
-            --profile batch \
+            --profile airflow \
             ps --all
