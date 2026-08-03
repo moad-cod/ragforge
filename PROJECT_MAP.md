@@ -323,7 +323,12 @@ never reads the FastAPI JWT. A path-preserving same-origin proxy forwards JSON,
 multipart uploads, and streaming SSE responses. Ingestion views reconnect with
 `Last-Event-ID` and recover through PostgreSQL status reads. The backend now
 also exposes tenant-owned recent runs, safe failed-run retries, query history,
-and ranked chunk/document retrieval traces.
+and ranked chunk/document retrieval traces. The public sign-in route is a
+focused RAG engineering control-plane entrance: it keeps the real login request,
+session cookie, `/projects` redirect, and registration link intact while
+presenting the document-to-grounded-answer workflow, retrieval tracing, and
+source-aware answer model without adding fake metrics, OAuth, or password
+recovery affordances.
 
 Airflow and Celery talk to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally keeps orchestration workers from owning application database writes directly. The internal API delegates every write to the same ingestion repository used elsewhere. In Airflow mode, FastAPI authenticates through Airflow's `/auth/token` endpoint and triggers DAG runs through the Airflow 3 public `/api/v2` API. In Celery mode, FastAPI publishes a Celery chain through `app/workers/tasks.py`.
 
@@ -648,6 +653,7 @@ Optional provider settings:
 | `backend/tests/e2e/test_control_plane.py` | Task 26 Airflow-backed containerized upload-to-answer, lineage, Redis recovery, failure, and tenant-isolation tests |
 | `scripts/e2e_v2.sh` | Isolated one-command Task 26 Compose orchestrator |
 | `frontend/src/**/*.test.tsx` | Task 27 loading, empty, success, failure, SSE parsing, and reconnect tests |
+| `frontend/src/app/(auth)/login/page.test.tsx` | Focused sign-in UX/auth tests for validation, pending submit state, accessible backend errors, password visibility, and the unchanged `/api/auth/login` flow |
 | `.github/workflows/frontend.yml` | Frontend lint, test, and production-build gate |
 | `backend/evaluation/legacy/evaluate_legacy_ragas.py` | Legacy evaluation helper for local experiments |
 | `backend/evaluation/airflow_benchmark/` | Airflow benchmark CLI and report package |
@@ -675,3 +681,9 @@ Optional provider settings:
 - The frontend uses a same-origin Next.js proxy so JWTs remain in HttpOnly
   cookies while authenticated POST and GET SSE streams retain header-based
   FastAPI authorization.
+- The redesigned login page uses the black/charcoal/warm-cream interface
+  palette, a compact ingest/retrieve/observe workflow, an elevated sign-in
+  panel, accessible inline authentication errors, keyboard-friendly password
+  visibility, and dark autofill styling. Registration is linked because
+  `/register` exists; password recovery and OAuth are intentionally omitted
+  because no matching auth routes are implemented.

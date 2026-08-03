@@ -458,6 +458,16 @@ select:focus {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  border-color: var(--border-focus);
+  -webkit-box-shadow: 0 0 0 1000px var(--surface-muted) inset;
+  -webkit-text-fill-color: var(--ink);
+  caret-color: var(--ink);
+  transition: background-color 9999s ease-in-out 0s;
+}
+
 /* Primary button */
 
 .primary-button {
