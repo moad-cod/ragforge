@@ -38,12 +38,20 @@ class ArtifactStore:
     """Small S3-compatible object store used by the pipeline commands."""
 
     def __init__(self, client=None) -> None:
+        max_attempts = int(os.environ.get("MINIO_MAX_ATTEMPTS", "3"))
+        connect_timeout = float(os.environ.get("MINIO_CONNECT_TIMEOUT_SECONDS", "3"))
+        read_timeout = float(os.environ.get("MINIO_READ_TIMEOUT_SECONDS", "30"))
         self.client = client or boto3.client(
             "s3",
             endpoint_url=_minio_endpoint(),
             aws_access_key_id=os.environ.get("MINIO_ACCESS_KEY", "ragforge"),
             aws_secret_access_key=os.environ.get("MINIO_SECRET_KEY", "ragforge123"),
-            config=Config(signature_version="s3v4"),
+            config=Config(
+                signature_version="s3v4",
+                connect_timeout=connect_timeout,
+                read_timeout=read_timeout,
+                retries={"max_attempts": max_attempts, "mode": "standard"},
+            ),
             region_name="us-east-1",
         )
 
