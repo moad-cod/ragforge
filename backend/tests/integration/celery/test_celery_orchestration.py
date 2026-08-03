@@ -54,6 +54,80 @@ class IngestionOrchestratorTests(unittest.TestCase):
         ):
             self.assertTrue(ingestion_orchestration_enabled())
 
+class IngestionDispatchFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_configured_orchestrator_failure_marks_run_failed(self):
+        from app.services import ingestion_orchestrator
+
+        db = SimpleNamespace(commit=AsyncMock())
+
+        with (
+            patch.object(settings, "ORCHESTRATOR", "celery"),
+            patch.object(settings, "CELERY_BROKER_URL", "redis://redis:6379/1"),
+            patch.object(settings, "CELERY_TASK_ALWAYS_EAGER", False),
+            patch(
+                "app.workers.tasks.enqueue_ingestion",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.services.ingestion_orchestrator.AsyncSessionLocal",
+                side_effect=lambda: _DatabaseContext(db),
+            ),
+            patch(
+                "app.services.ingestion_orchestrator.mark_ingestion_failed",
+                AsyncMock(return_value=SimpleNamespace(id="run-id")),
+            ) as mark_failed,
+            patch(
+                "app.services.ingestion_orchestrator.publish_ingestion_event",
+                AsyncMock(),
+            ) as publish_event,
+        ):
+            result = await ingestion_orchestrator.enqueue_ingestion("run-id")
+
+        self.assertIsNone(result)
+        mark_failed.assert_awaited_once_with(
+            db,
+            "run-id",
+            ingestion_orchestrator.DISPATCH_FAILURE_MESSAGE,
+        )
+        db.commit.assert_awaited_once()
+        publish_event.assert_awaited_once_with(
+            "run-id",
+            "failed",
+            data={"error_message": ingestion_orchestrator.DISPATCH_FAILURE_MESSAGE},
+        )
+
+    async def test_configured_orchestrator_exception_is_marked_failed_and_raised(self):
+        from app.services import ingestion_orchestrator
+
+        db = SimpleNamespace(commit=AsyncMock())
+
+        with (
+            patch.object(settings, "ORCHESTRATOR", "celery"),
+            patch.object(settings, "CELERY_BROKER_URL", "redis://redis:6379/1"),
+            patch.object(settings, "CELERY_TASK_ALWAYS_EAGER", False),
+            patch(
+                "app.workers.tasks.enqueue_ingestion",
+                AsyncMock(side_effect=RuntimeError("broker unavailable")),
+            ),
+            patch(
+                "app.services.ingestion_orchestrator.AsyncSessionLocal",
+                side_effect=lambda: _DatabaseContext(db),
+            ),
+            patch(
+                "app.services.ingestion_orchestrator.mark_ingestion_failed",
+                AsyncMock(return_value=SimpleNamespace(id="run-id")),
+            ) as mark_failed,
+            patch(
+                "app.services.ingestion_orchestrator.publish_ingestion_event",
+                AsyncMock(),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "broker unavailable"):
+                await ingestion_orchestrator.enqueue_ingestion("run-id")
+
+        mark_failed.assert_awaited_once()
+        db.commit.assert_awaited_once()
+
 
 class CeleryIngestionTests(unittest.IsolatedAsyncioTestCase):
     async def test_enqueue_publishes_workflow_and_marks_run_queued(self):
