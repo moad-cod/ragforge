@@ -199,6 +199,95 @@ class ControlPlaneRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await update_ingestion_status(db, run.id, "indexed")
         db.flush.assert_not_awaited()
 
+    async def test_repository_reconciles_stale_dispatch_to_failed_terminal_state(self):
+        run = IngestionRun(
+            id="00000000-0000-0000-0000-000000000001",
+            project_id="00000000-0000-0000-0000-000000000002",
+            document_id="00000000-0000-0000-0000-000000000003",
+            document_version_id="00000000-0000-0000-0000-000000000004",
+            status="queued",
+            created_by="00000000-0000-0000-0000-000000000005",
+            created_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=10),
+        )
+        document = Document(
+            id=run.document_id,
+            project_id=run.project_id,
+            status="landed",
+            created_by=run.created_by,
+        )
+        version = DocumentVersion(
+            id=run.document_version_id,
+            document_id=run.document_id,
+            version_number=1,
+            content_hash="hash",
+            status="landed",
+        )
+        db = SimpleNamespace(get=AsyncMock(), flush=AsyncMock())
+
+        async def get_model(model, _identifier):
+            return {IngestionRun: run, Document: document, DocumentVersion: version}[model]
+
+        db.get.side_effect = get_model
+        result = await reconcile_stale_dispatch(
+            db,
+            run,
+            timeout=timedelta(minutes=5),
+            error_message="dispatch timed out",
+        )
+
+        self.assertIs(result, run)
+        self.assertEqual(run.status, "failed")
+        self.assertEqual(run.error_message, "dispatch timed out")
+        self.assertIsNotNone(run.finished_at)
+        self.assertEqual(document.status, "failed")
+        self.assertEqual(version.status, "failed")
+        db.flush.assert_awaited_once()
+
+    async def test_status_endpoint_reconciles_stale_dispatch_run(self):
+        run = SimpleNamespace(
+            id="run-id",
+            document_id="document-id",
+            document_version_id="version-id",
+            status="queued",
+            airflow_dag_run_id=None,
+            error_message=None,
+        )
+        failed = SimpleNamespace(
+            **{
+                **run.__dict__,
+                "status": "failed",
+                "error_message": "dispatch timeout",
+                "finished_at": datetime.now(UTC).replace(tzinfo=None),
+            }
+        )
+        version = SimpleNamespace(bronze_path="bronze/key", silver_path=None, gold_path=None)
+        db = SimpleNamespace(commit=AsyncMock())
+
+        with (
+            patch(
+                "app.api.ingest.ingestion_repository.get_owned_ingestion_run",
+                AsyncMock(return_value=run),
+            ),
+            patch(
+                "app.api.ingest.ingestion_repository.reconcile_stale_dispatch",
+                AsyncMock(return_value=failed),
+            ),
+            patch(
+                "app.api.ingest.version_repository.get_document_version",
+                AsyncMock(return_value=version),
+            ),
+            patch("app.api.ingest.publish_ingestion_event", AsyncMock()) as publish_event,
+        ):
+            response = await get_ingestion_run_status(
+                "run-id",
+                db=db,
+                user={"user_id": "user-id"},
+            )
+
+        self.assertEqual(response["status"], "failed")
+        db.commit.assert_awaited_once()
+        publish_event.assert_awaited_once()
+
     def test_pipeline_service_token_is_required(self):
         with patch.object(settings, "PIPELINE_SERVICE_TOKEN", "secret"):
             with self.assertRaises(HTTPException) as context:
