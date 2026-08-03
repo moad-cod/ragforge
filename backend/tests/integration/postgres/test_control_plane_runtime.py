@@ -15,7 +15,10 @@ from app.api.internal_pipeline import (
 )
 from app.core.config import settings
 from app.models import Document, DocumentVersion, IngestionRun
-from app.repositories.ingestion_runs import update_ingestion_status
+from app.repositories.ingestion_runs import (
+    reconcile_stale_dispatch,
+    update_ingestion_status,
+)
 from app.services.bronze_storage import object_key
 
 
