@@ -454,6 +454,24 @@ def _ingestion_run_payload(run, version) -> dict:
     }
 
 
+async def _reconcile_stale_dispatch_run(db: AsyncSession, run):
+    original_status = run.status
+    updated = await ingestion_repository.reconcile_stale_dispatch(
+        db,
+        run,
+        timeout=timedelta(seconds=settings.INGESTION_DISPATCH_TIMEOUT_SECONDS),
+        error_message=STALE_DISPATCH_MESSAGE,
+    )
+    if updated.status != original_status:
+        await db.commit()
+        await publish_ingestion_event(
+            updated.id,
+            "failed",
+            data={"error_message": STALE_DISPATCH_MESSAGE},
+        )
+    return updated
+
+
 @router.post("/file", response_model=FileLandingResponse, status_code=202)
 async def upload_file(
     background_tasks: BackgroundTasks,
