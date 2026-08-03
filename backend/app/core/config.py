@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     MINIO_BUCKET_BRONZE: str = "bronze"
     MINIO_BUCKET_SILVER: str = "silver"
     MINIO_BUCKET_GOLD: str = "gold"
+    MINIO_CONNECT_TIMEOUT_SECONDS: float = 3.0
+    MINIO_READ_TIMEOUT_SECONDS: float = 30.0
+    MINIO_MAX_ATTEMPTS: int = 3
 
     # Redis is an optional query-response cache. PostgreSQL remains durable.
     REDIS_URL: str = ""
