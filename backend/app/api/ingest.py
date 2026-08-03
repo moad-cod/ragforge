@@ -1,5 +1,5 @@
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, UploadFile, File, Form, Header, HTTPException, Depends, Query, Request
 from pydantic import BaseModel
@@ -58,6 +58,11 @@ SUPPORTED_MIME_TYPES = {
 }
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".html", ".htm", ".md", ".txt"}
+STALE_DISPATCH_MESSAGE = (
+    "Ingestion orchestration did not start before the dispatch timeout. "
+    "The Bronze artifact is still available; retry the run after checking "
+    "the configured worker service."
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
