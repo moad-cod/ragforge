@@ -50,7 +50,7 @@ Next.js control-plane UI / Swagger UI
 | Indexing | `backend/app/services/indexer.py`, `backend/app/services/chunk_indexing.py` | Legacy/direct Qdrant writes plus deterministic PostgreSQL-Qdrant lineage for durable file ingestion |
 | Retrieval | `backend/app/services/retriever.py`, `backend/app/services/retrieval/*` | Dense/sparse hybrid search, BM25 sparse embeddings, optional reranking |
 | Realtime and cache | `backend/app/services/event_stream.py`, `backend/app/services/query_cache.py` | Redis-backed ingestion replay/fan-out and best-effort query response caching |
-| Storage | `backend/app/services/bronze_storage.py`, `backend/app/services/pipeline_artifacts.py`, `backend/app/services/storage.py` | MinIO Bronze/Silver/Gold objects and Cloudflare R2 multimodal page images |
+| Storage | `backend/app/services/bronze_storage.py`, `backend/app/services/pipeline_artifacts.py`, `backend/app/services/storage.py` | MinIO Bronze/Silver/Gold objects with bounded S3 timeouts and Bronze bucket validation; Cloudflare R2 multimodal page images |
 
 ## Repository Structure
 
@@ -330,7 +330,7 @@ presenting the document-to-grounded-answer workflow, retrieval tracing, and
 source-aware answer model without adding fake metrics, OAuth, or password
 recovery affordances.
 
-Airflow and Celery talk to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally keeps orchestration workers from owning application database writes directly. The internal API delegates every write to the same ingestion repository used elsewhere. In Airflow mode, FastAPI authenticates through Airflow's `/auth/token` endpoint and triggers DAG runs through the Airflow 3 public `/api/v2` API. In Celery mode, FastAPI publishes a Celery chain through `app/workers/tasks.py`.
+Airflow and Celery talk to `GET/PATCH /internal/pipeline/ingestion-runs/{id}` with `PIPELINE_SERVICE_TOKEN`. This HTTP boundary intentionally keeps orchestration workers from owning application database writes directly. The internal API delegates every write to the same ingestion repository used elsewhere. In Airflow mode, FastAPI authenticates through Airflow's `/auth/token` endpoint and triggers DAG runs through the Airflow 3 public `/api/v2` API. In Celery mode, FastAPI publishes a Celery chain through `app/workers/tasks.py`. If the configured orchestrator does not accept a landed run, `backend/app/services/ingestion_orchestrator.py` persists the run as `failed`, records `finished_at`, publishes a failure event, and leaves the deterministic Bronze object available for retry.
 
 The `ragforge_ingestion` DAG runs `detect_ingestion_technique`, `bronze_to_silver`, `silver_to_gold_embed`, `upsert_qdrant`, and `update_postgres_status`. The Celery chain mirrors the same logical boundaries as `detect_ingestion_plan_task`, `bronze_to_silver_task`, `silver_to_gold_task`, `upsert_qdrant_task`, and `finalize_ingestion_task`. The first stage reads durable run/version/document metadata through the control-plane API, receives an `ingestion_plan`, and records the run as `running`. Airflow transformation commands receive `{ingestion_run_id}`, `{profile}`, `{chunker_id}`, and `{source_type}`; Celery tasks call shared Python stage functions in `backend/jobs/ingestion_workflow.py`. The Task 18 indexing boundary accepts embedded Gold chunks at `POST /internal/pipeline/ingestion-runs/{id}/chunks/index`, rebuilds that version's Qdrant points, and atomically replaces its PostgreSQL chunk rows.
 
@@ -421,9 +421,12 @@ landed -> queued -> running -> silver_completed -> gold_completed -> indexed
 any non-terminal stage -> failed | cancelled
 ```
 
-Only failed runs can be retried. Retry resets the run to `queued`, clears its timing/error/orchestration ID and Silver/Gold paths, and returns the document/version to `landed`.
+Only failed runs can be retried. Retry resets the run to `queued`, clears its timing/error/orchestration ID and Silver/Gold paths, and returns the document/version to `landed`. Public run reads reconcile stale `landed` or `queued` runs that exceeded `INGESTION_DISPATCH_TIMEOUT_SECONDS` by marking them `failed`, recording `finished_at`, and preserving the Bronze artifact for safe retry.
 
 The public run response exposes four coarse progress booleans (`bronze`, `silver`, `gold`, `qdrant`) plus run-level timestamps and error text. Redis/SSE maps the six forward statuses to ordered progress events and also emits terminal failure/cancellation events. PostgreSQL does not currently store nine separate pipeline-stage records.
+The onboarding progress UI treats `progress.bronze` as the durable Bronze
+completion signal and shows `landed`/`queued` runs as waiting for parsing rather
+than as an active Bronze upload.
 
 ## Docker And Local Services
 
@@ -453,7 +456,7 @@ The built-in Bronze-to-Silver job is Python/PyArrow, not Spark. The Compose Spar
 
 ## Requirements Strategy
 
-`backend/requirements.txt` is intentionally a slim default runtime set. It includes FastAPI, SQLAlchemy/asyncpg, Qdrant, FastEmbed, Celery, the async Redis client, document parsers, auth, OpenAI/Groq clients, and S3/R2 support.
+`backend/requirements.txt` is intentionally a slim default runtime set. It includes FastAPI, SQLAlchemy/asyncpg, Qdrant, FastEmbed, Celery, the async Redis client, document parsers, auth, OpenAI/Groq clients, and S3/R2 support. MinIO clients use `MINIO_CONNECT_TIMEOUT_SECONDS`, `MINIO_READ_TIMEOUT_SECONDS`, and `MINIO_MAX_ATTEMPTS` to keep S3 operations bounded.
 
 It intentionally does not include older full frozen-environment dependencies or heavy optional stacks such as PyTorch/CUDA wheels, `sentence-transformers`, `transformers`, `colpali_engine`, LangChain, and evaluation/training packages.
 
@@ -464,10 +467,10 @@ Optional ColQwen2/`colpali_engine` multimodal support and CrossEncoder reranking
 1. The user authenticates with JWT.
 2. The API verifies project ownership.
 3. The API validates the file/chunker, hashes content, and gets or creates a logical `Document`.
-4. Raw bytes are stored under the versioned path in the MinIO `bronze` bucket.
+4. Raw bytes are stored under the versioned path in the MinIO `bronze` bucket after validating that the bucket exists.
 5. One transaction creates `DocumentVersion(status=landed)` and `IngestionRun(status=landed)`.
 6. The API returns HTTP 202 with document, version, and ingestion-run IDs; it does not parse/embed/index in the request.
-7. When orchestration is configured, a post-response task calls `backend/app/services/ingestion_orchestrator.py`; `ORCHESTRATOR=airflow` triggers the Airflow DAG, and `ORCHESTRATOR=celery` publishes the Celery chain.
+7. When orchestration is configured, a post-response task calls `backend/app/services/ingestion_orchestrator.py`; `ORCHESTRATOR=airflow` triggers the Airflow DAG, and `ORCHESTRATOR=celery` publishes the Celery chain. Enqueue failures are terminal and retryable instead of being silently logged while the run remains landed/queued.
 8. The selected orchestrator fetches run metadata and detects the ingestion technique from the persisted chunker/source, producing a deterministic execution profile.
 9. Airflow can use profile-specific commands when configured; Celery calls the shared stage functions directly.
 10. The selected orchestrator parses/chunks Bronze into Silver Parquet, embeds Silver in planner-sized batches into Gold Parquet, and indexes Gold through the internal Qdrant boundary. Pooled Sentence Chunking reuses vectors computed during chunk construction.
@@ -642,6 +645,7 @@ Optional provider settings:
 | `backend/tests/integration/postgres/test_control_plane_runtime.py` | Repository transitions, retry/recovery, seeding, and schema-validation behavior |
 | `backend/tests/integration/streaming/test_realtime_streaming.py` | Task 23 SSE, replay, fallback, ownership, token, disconnect, heartbeat, and optional live Redis tests |
 | `backend/tests/unit/ingestion/test_pipeline_artifacts.py` | Task 25 deterministic Silver/Gold Parquet, retry, empty input, and embedding mismatch tests |
+| `backend/tests/unit/ingestion/test_bronze_storage.py` | Bronze MinIO bucket validation, bounded upload boundary, and idempotent object-key behavior |
 | `backend/tests/unit/ingestion/test_ingestion_planner.py` | Adaptive technique classification, profiles, resource classes, batch sizes, and concurrency hints |
 | `backend/tests/unit/ingestion/test_ingestion_execution.py` | Profile-specific command selection, generic fallback, and worker environment propagation |
 | `backend/tests/integration/airflow/test_airflow_service.py` | Airflow REST authentication, DAG trigger, and durable run-ID handling |
@@ -675,6 +679,7 @@ Optional provider settings:
 - Document deletion removes base-collection text points and R2 images, but it does not explicitly remove that document's points from the multimodal collection. Project deletion removes both entire collections.
 - Qdrant and PostgreSQL writes are not atomic. Deterministic IDs and version replacement make retry/rebuild the recovery path.
 - Orchestrator triggering is optional and best-effort. Without a configured selected orchestrator, a file upload remains `landed`; there is no inline pipeline fallback.
+- When a selected Airflow or Celery orchestrator is configured but fails to accept a run, the run is marked `failed` with `finished_at` so the frontend can show a safe retry instead of an indefinite Bronze/queued state.
 - Celery currently reuses the existing `ingestion_runs.airflow_dag_run_id` column for workflow IDs to avoid schema churn during comparison.
 - The containerized E2E suite is still Airflow-oriented; Celery currently has focused unit tests and benchmark validation.
 - `app/main.py` has no CORS middleware or startup dependency checks.
