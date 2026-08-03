@@ -663,6 +663,7 @@ async def stream_ingestion_run_events(
     )
     if run is None:
         raise HTTPException(404, "Ingestion run not found")
+    run = await _reconcile_stale_dispatch_run(db, run)
     version = await version_repository.get_document_version(db, run.document_version_id)
     if version is None:
         raise HTTPException(500, "Ingestion run has no document version")
