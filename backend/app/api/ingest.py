@@ -606,6 +606,7 @@ async def list_ingestion_runs(
     )
     payloads: list[dict] = []
     for run in runs:
+        run = await _reconcile_stale_dispatch_run(db, run)
         version = await version_repository.get_document_version(db, run.document_version_id)
         if version is not None:
             payloads.append(_ingestion_run_payload(run, version))
