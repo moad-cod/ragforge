@@ -64,6 +64,8 @@ def object_key(bronze_path: str) -> str:
 
 def upload_raw_file(data: bytes, bronze_path: str, content_type: str | None = None) -> str:
     key = object_key(bronze_path)
+    client = _client()
+    _ensure_bronze_bucket(client)
     parameters = {
         "Bucket": settings.MINIO_BUCKET_BRONZE,
         "Key": key,
@@ -71,7 +73,7 @@ def upload_raw_file(data: bytes, bronze_path: str, content_type: str | None = No
     }
     if content_type:
         parameters["ContentType"] = content_type
-    _client().put_object(**parameters)
+    client.put_object(**parameters)
     return f"{settings.MINIO_BUCKET_BRONZE}/{key}"
 
 
