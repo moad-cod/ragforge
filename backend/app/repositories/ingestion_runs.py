@@ -164,6 +164,26 @@ async def mark_ingestion_failed(
     )
 
 
+async def reconcile_stale_dispatch(
+    db: AsyncSession,
+    run: IngestionRun,
+    *,
+    timeout: timedelta,
+    error_message: str,
+) -> IngestionRun:
+    """Fail runs that were landed/queued but never accepted by a worker."""
+    if run.status not in {"landed", "queued"}:
+        return run
+    reference = run.started_at or run.created_at
+    if reference is None:
+        return run
+    cutoff = datetime.now(UTC).replace(tzinfo=None) - timeout
+    if reference > cutoff:
+        return run
+    updated = await mark_ingestion_failed(db, run.id, error_message)
+    return updated or run
+
+
 async def list_failed_runs(db: AsyncSession, project_id: str | None = None) -> list[IngestionRun]:
     statement = select(IngestionRun).where(IngestionRun.status == "failed")
     if project_id is not None:
