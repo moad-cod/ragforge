@@ -35,6 +35,28 @@ def _client():
     return _minio
 
 
+def _ensure_bronze_bucket(client) -> None:
+    global _bronze_bucket_checked
+    if _bronze_bucket_checked:
+        return
+    try:
+        client.head_bucket(Bucket=settings.MINIO_BUCKET_BRONZE)
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in {"404", "NoSuchBucket", "NotFound"}:
+            raise RuntimeError(
+                f"MinIO Bronze bucket {settings.MINIO_BUCKET_BRONZE!r} does not exist"
+            ) from exc
+        raise RuntimeError(
+            f"MinIO Bronze bucket {settings.MINIO_BUCKET_BRONZE!r} is not reachable"
+        ) from exc
+    except BotoCoreError as exc:
+        raise RuntimeError(
+            f"MinIO Bronze bucket {settings.MINIO_BUCKET_BRONZE!r} is not reachable"
+        ) from exc
+    _bronze_bucket_checked = True
+
+
 def object_key(bronze_path: str) -> str:
     prefix = f"{settings.MINIO_BUCKET_BRONZE}/"
     return bronze_path[len(prefix):] if bronze_path.startswith(prefix) else bronze_path
