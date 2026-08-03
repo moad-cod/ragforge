@@ -711,6 +711,7 @@ async def stream_ingestion_run_events(
                 current = await ingestion_repository.get_ingestion_run(stream_db, ingestion_run_id)
                 if current is None:
                     return
+                current = await _reconcile_stale_dispatch_run(stream_db, current)
                 current_version = await version_repository.get_document_version(
                     stream_db,
                     current.document_version_id,
