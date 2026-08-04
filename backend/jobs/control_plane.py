@@ -62,6 +62,13 @@ class RAGForgeControlPlane:
             },
         )
 
+    def update_embedding_progress(self, ingestion_run_id: str, progress: dict) -> dict:
+        return self._request(
+            "PATCH",
+            f"/internal/pipeline/ingestion-runs/{ingestion_run_id}/embedding-progress",
+            progress,
+        )
+
     def index_chunks(self, ingestion_run_id: str, chunks: list[dict]) -> dict:
         return self._request(
             "POST",

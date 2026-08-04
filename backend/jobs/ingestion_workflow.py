@@ -52,7 +52,24 @@ def bronze_to_silver_stage(ingestion: IngestionPayload) -> IngestionPayload:
 def silver_to_gold_embed_stage(ingestion: IngestionPayload) -> IngestionPayload:
     ingestion_run_id = _ingestion_run_id(ingestion)
     client = RAGForgeControlPlane()
-    result = silver_to_gold(client.get_run(ingestion_run_id))
+    run = client.get_run(ingestion_run_id)
+    latest_progress = {
+        "stage": "queued",
+        "embedding_model": run.get("embedding_model") or "BAAI/bge-small-en-v1.5",
+        "total_chunks": 0,
+        "embedded_chunks": 0,
+    }
+
+    def report_progress(progress: dict[str, Any]) -> None:
+        latest_progress.update(progress)
+        client.update_embedding_progress(ingestion_run_id, latest_progress)
+
+    try:
+        result = silver_to_gold(run, progress_callback=report_progress)
+    except Exception as exc:
+        failed_progress = {**latest_progress, "stage": "failed", "error_message": str(exc)}
+        client.update_embedding_progress(ingestion_run_id, failed_progress)
+        raise
     artifact_path = result.get("artifact_path")
     if not artifact_path:
         raise RuntimeError("Silver-to-Gold job did not return artifact_path")
