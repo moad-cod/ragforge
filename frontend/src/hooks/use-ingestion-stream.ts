@@ -33,6 +33,10 @@ export function useIngestionStream(initial: IngestionRun) {
           event.progress && typeof event.progress === "object"
             ? (event.progress as IngestionRun["progress"])
             : current.progress,
+        embedding_progress:
+          event.embedding_progress && typeof event.embedding_progress === "object"
+            ? (event.embedding_progress as IngestionRun["embedding_progress"])
+            : current.embedding_progress,
       }));
     };
 
