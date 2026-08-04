@@ -242,11 +242,10 @@ class ControlPlaneDatabaseTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(IntegrityError):
             await self.db.flush()
 
-    async def test_duplicate_chunk_content_hash_is_rejected(self):
+    async def test_duplicate_chunk_content_hash_is_allowed(self):
         original = await self.db.get(Chunk, self.seed.chunk_id)
         self.db.add(self._duplicate_chunk(original, content_hash=original.content_hash))
-        with self.assertRaises(IntegrityError):
-            await self.db.flush()
+        await self.db.flush()
 
     async def test_duplicate_qdrant_point_id_is_rejected(self):
         original = await self.db.get(Chunk, self.seed.chunk_id)

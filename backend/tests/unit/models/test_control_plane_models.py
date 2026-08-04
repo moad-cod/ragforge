@@ -60,6 +60,10 @@ class ControlPlaneModelTests(unittest.TestCase):
                 ]
                 self.assertEqual(len(checks), 1)
 
+    def test_embedding_run_tracks_model_loading_and_retrying(self):
+        self.assertEqual(EmbeddingRun(status="loading_model").status, "loading_model")
+        self.assertEqual(EmbeddingRun(status="retrying").status, "retrying")
+
     def test_chunk_uniqueness_constraints_are_present(self):
         unique_columns = {
             tuple(constraint.columns.keys())
@@ -68,7 +72,7 @@ class ControlPlaneModelTests(unittest.TestCase):
         }
         self.assertIn(("qdrant_point_id",), unique_columns)
         self.assertIn(("document_version_id", "chunk_index"), unique_columns)
-        self.assertIn(("document_version_id", "content_hash"), unique_columns)
+        self.assertNotIn(("document_version_id", "content_hash"), unique_columns)
 
     def test_task_11_required_indexes_are_present(self):
         expected = {
