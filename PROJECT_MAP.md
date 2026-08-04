@@ -241,7 +241,8 @@ Chunk
 
 EmbeddingRun
   id, project_id, document_version_id, embedding_model, status
-  total_chunks, embedded_chunks, timestamps, error_message
+  total_chunks, embedded_chunks, total_batches, embedded_batches
+  batch size, backend/device/dimension, attempt, heartbeat, timestamps, error
   belongs to Project and DocumentVersion
 
 QueryLog
