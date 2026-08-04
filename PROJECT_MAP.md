@@ -684,9 +684,11 @@ Optional provider settings:
 - Pooled-sentence (`late_chunking`) vectors cross the Silver/Gold boundary as `precomputed_dense_vector`; other chunkers are embedded in batches selected by the planner.
 - The registry is built for SaaS frontend display and does not expose callable paths publicly.
 - The default Docker image is intentionally text-RAG focused; optional multimodal and CrossEncoder rerank dependencies should be isolated.
-- `EmbeddingRun` has a model and repository but the active API/orchestrator pipeline does not create or update embedding-run records.
+- Durable file ingestion creates and updates `EmbeddingRun` records through the internal pipeline API during Silver-to-Gold embedding; late-chunking runs that reuse precomputed Silver vectors still bypass a second model load.
+- Compose mounts `embedding_model_cache` at `/models`, and the default `EMBEDDING_CACHE_DIR=/models/fastembed` keeps local FastEmbed downloads reusable across worker/container restarts.
+- In the default local FastEmbed runtime, `EMBEDDING_DEVICE=auto` resolves to CPU metadata; explicit CUDA/MPS settings fail fast unless a compatible worker image is provided.
 - Document deletion removes base-collection text points and R2 images, but it does not explicitly remove that document's points from the multimodal collection. Project deletion removes both entire collections.
-- Qdrant and PostgreSQL writes are not atomic. Deterministic IDs and version replacement make retry/rebuild the recovery path.
+- Qdrant and PostgreSQL writes are not atomic. Deterministic IDs and version replacement make retry/rebuild the recovery path. Duplicate chunk content hashes are allowed; duplicate chunk indexes are rejected.
 - Orchestrator triggering is optional and best-effort. Without a configured selected orchestrator, a file upload remains `landed`; there is no inline pipeline fallback.
 - When a selected Airflow or Celery orchestrator is configured but fails to accept a run, the run is marked `failed` with `finished_at` so the frontend can show a safe retry instead of an indefinite Bronze/queued state.
 - Celery currently reuses the existing `ingestion_runs.airflow_dag_run_id` column for workflow IDs to avoid schema churn during comparison.
