@@ -35,6 +35,9 @@ def build_job_environment(
             "RAGFORGE_INGESTION_TECHNIQUE": str(plan["technique_id"]),
             "RAGFORGE_INGESTION_RESOURCE_CLASS": str(plan["resource_class"]),
             "RAGFORGE_EMBEDDING_BATCH_SIZE": str(plan["embedding_batch_size"]),
+            "RAGFORGE_EMBEDDING_TIMEOUT_SECONDS": str(
+                environment.get("EMBEDDING_TIMEOUT_SECONDS", "900")
+            ),
             "RAGFORGE_INGESTION_MAX_PARALLELISM": str(plan["max_parallelism"]),
         }
     )

@@ -36,6 +36,9 @@ def _run_configured_job(
         source_type=plan["source_type"],
     )
     job_environment = build_job_environment(plan)
+    timeout_seconds = None
+    if environment_name == "RAGFORGE_SILVER_TO_GOLD_CMD":
+        timeout_seconds = float(job_environment.get("RAGFORGE_EMBEDDING_TIMEOUT_SECONDS") or 0) or None
     logger.info(
         "Running %s with profile=%s technique=%s resource_class=%s batch_size=%s",
         selected_environment,
@@ -51,7 +54,12 @@ def _run_configured_job(
             capture_output=True,
             text=True,
             env=job_environment,
+            timeout=timeout_seconds,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"{selected_environment} timed out after {timeout_seconds:g} seconds"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip()
         suffix = f": {detail}" if detail else ""
