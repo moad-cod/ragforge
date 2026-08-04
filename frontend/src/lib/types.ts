@@ -71,6 +71,23 @@ export type IngestionRun = {
     gold: boolean;
     qdrant: boolean;
   };
+  embedding_progress: {
+    stage: string;
+    embedding_model: string;
+    total_chunks: number;
+    embedded_chunks: number;
+    total_batches?: number | null;
+    embedded_batches?: number | null;
+    embedding_batch_size?: number | null;
+    embedding_backend?: string | null;
+    embedding_device?: string | null;
+    embedding_dimension?: number | null;
+    attempt?: number | null;
+    last_heartbeat_at?: string | null;
+    updated_at?: string | null;
+    error_code?: string | null;
+    error_message?: string | null;
+  } | null;
 };
 
 export type IngestionStatus =
