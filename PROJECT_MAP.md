@@ -38,15 +38,15 @@ Next.js control-plane UI / Swagger UI
 | Projects | `backend/app/api/projects.py` | Project CRUD, ownership checks, Qdrant collection lifecycle |
 | Documents | `backend/app/api/documents.py` | Document list/get/delete and document version listing |
 | Ingestion | `backend/app/api/ingest.py` | File, URL, Google Drive, and optional multimodal ingestion |
-| Pipeline control | `backend/app/api/internal_pipeline.py`, `backend/app/services/ingestion_orchestrator.py`, `backend/app/services/ingestion_planner.py` | Authenticated run metadata/status boundary, Airflow/Celery selection, and deterministic technique-to-execution planning |
-| Batch artifacts | `backend/app/services/pipeline_artifacts.py`, `backend/jobs/*.py` | Bronze parsing/chunking, shared stage functions, Silver/Gold Parquet, adaptive embedding batches, and Qdrant indexing |
-| Airflow execution | `backend/airflow/dags/ragforge_ingestion.py`, `backend/jobs/ingestion_execution.py` | Detects the selected chunking technique, chooses profile-aware commands, and exports resource hints |
+| Pipeline control | `backend/app/api/internal_pipeline.py`, `backend/app/services/ingestion_orchestrator.py`, `backend/app/services/ingestion_planner.py` | Authenticated run metadata/status/progress boundary, Airflow/Celery selection, and deterministic technique-to-execution planning |
+| Batch artifacts | `backend/app/services/pipeline_artifacts.py`, `backend/jobs/*.py` | Bronze parsing/chunking, shared stage functions, Silver/Gold Parquet, bounded embedding batches/progress callbacks, and Qdrant indexing |
+| Airflow execution | `backend/airflow/dags/ragforge_ingestion.py`, `backend/jobs/ingestion_execution.py` | Detects the selected chunking technique, chooses profile-aware commands, exports resource hints, and applies embedding-stage subprocess timeouts |
 | Celery execution | `backend/app/workers/celery_app.py`, `backend/app/workers/tasks.py`, `backend/worker.py` | Configures the Celery app, publishes the ingestion chain, retries failed stages, and exposes the worker entry point |
 | Benchmarks | `backend/evaluation/airflow_benchmark/*`, `backend/evaluation/celery_benchmark/*` | Matched orchestration benchmark CLIs, clients, workloads, validators, metrics, and report writers |
 | Query | `backend/app/api/query.py` | Text and multimodal queries, query SSE, history, and retrieval trace responses |
 | Chunker catalog | `backend/app/api/chunkers.py`, `backend/app/services/chunkers/registry.py` | Public chunker metadata, validation, and lazy callable lookup |
 | Parsing | `backend/app/services/parser.py` | PDF, DOCX, XLSX, PPTX, CSV, HTML, text, URL, and Google Drive parsing |
-| Dense embeddings | `backend/app/services/embedder.py` | Lazy `BAAI/bge-small-en-v1.5` embeddings through FastEmbed |
+| Dense embeddings | `backend/app/services/embedder.py` | Configurable FastEmbed or deterministic embeddings with per-worker model caching and readiness metadata |
 | Indexing | `backend/app/services/indexer.py`, `backend/app/services/chunk_indexing.py` | Legacy/direct Qdrant writes plus deterministic PostgreSQL-Qdrant lineage for durable file ingestion |
 | Retrieval | `backend/app/services/retriever.py`, `backend/app/services/retrieval/*` | Dense/sparse hybrid search, BM25 sparse embeddings, optional reranking |
 | Realtime and cache | `backend/app/services/event_stream.py`, `backend/app/services/query_cache.py` | Redis-backed ingestion replay/fan-out and best-effort query response caching |
