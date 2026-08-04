@@ -205,6 +205,7 @@ services:
       - "${FASTAPI_PORT:-8000}:8000"
     volumes:
       - ./backend:/app
+      - embedding_model_cache:/models
     depends_on:
       postgres:
         condition: service_healthy
