@@ -245,6 +245,13 @@ services:
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
       EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-fastembed}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-384}
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-auto}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-192}
+      EMBEDDING_TIMEOUT_SECONDS: ${EMBEDDING_TIMEOUT_SECONDS:-900}
+      EMBEDDING_ALLOW_MODEL_DOWNLOAD: ${EMBEDDING_ALLOW_MODEL_DOWNLOAD:-true}
+      EMBEDDING_CACHE_DIR: ${EMBEDDING_CACHE_DIR:-/models/fastembed}
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ragforge
       MINIO_SECRET_KEY: ragforge123
@@ -263,6 +270,7 @@ services:
       PYTHONPATH: /app
     volumes:
       - ./backend:/app
+      - embedding_model_cache:/models
     depends_on:
       fastapi:
         condition: service_started
