@@ -361,8 +361,9 @@ services:
     command:
       - -c
       - |
-        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
-        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
+        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /models/fastembed
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /models
+        chmod -R g+rwX /models
         exec /entrypoint airflow version
     mem_limit: 1g
 
