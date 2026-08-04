@@ -10,6 +10,7 @@ from app.core.db import AsyncSessionLocal, get_db
 from app.models.tables import Project, Document, DocumentVersion
 from app.repositories import document_versions as version_repository
 from app.repositories import documents as document_repository
+from app.repositories import embedding_runs as embedding_repository
 from app.repositories import ingestion_runs as ingestion_repository
 from app.repositories import projects as project_repository
 from app.services.parser import parse_document, parse_url, parse_gdrive
@@ -123,7 +124,7 @@ def _process_and_index(
         _index(chunks, project_id, document_id, collection)
         return chunks
 
-EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+EMBEDDING_MODEL = settings.EMBEDDING_MODEL
 
 
 def _content_hash(data: bytes | str | list[str]) -> str:
@@ -419,6 +420,24 @@ class IngestionProgress(BaseModel):
     qdrant: bool
 
 
+class EmbeddingProgress(BaseModel):
+    stage: str
+    embedding_model: str
+    total_chunks: int
+    embedded_chunks: int
+    total_batches: int | None = None
+    embedded_batches: int | None = None
+    embedding_batch_size: int | None = None
+    embedding_backend: str | None = None
+    embedding_device: str | None = None
+    embedding_dimension: int | None = None
+    attempt: int | None = None
+    last_heartbeat_at: datetime | None = None
+    updated_at: datetime | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
 class IngestionRunResponse(BaseModel):
     ingestion_run_id: str
     document_id: str
@@ -430,9 +449,43 @@ class IngestionRunResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    embedding_progress: EmbeddingProgress | None = None
 
 
-def _ingestion_run_payload(run, version) -> dict:
+def _embedding_progress_payload(embedding_run) -> dict | None:
+    if embedding_run is None:
+        return None
+    return {
+        "stage": embedding_run.status,
+        "embedding_model": embedding_run.embedding_model,
+        "total_chunks": embedding_run.total_chunks,
+        "embedded_chunks": embedding_run.embedded_chunks,
+        "total_batches": embedding_run.total_batches,
+        "embedded_batches": embedding_run.embedded_batches,
+        "embedding_batch_size": embedding_run.batch_size,
+        "embedding_backend": embedding_run.embedding_backend,
+        "embedding_device": embedding_run.embedding_device,
+        "embedding_dimension": embedding_run.embedding_dimension,
+        "attempt": embedding_run.attempt,
+        "last_heartbeat_at": embedding_run.last_heartbeat_at,
+        "updated_at": embedding_run.updated_at,
+        "error_code": embedding_run.error_code,
+        "error_message": embedding_run.error_message,
+    }
+
+
+def _embedding_progress_checkpoint(progress) -> dict | None:
+    if not isinstance(progress, dict):
+        return None
+    return {
+        "stage": progress.get("stage"),
+        "total_chunks": progress.get("total_chunks"),
+        "embedded_chunks": progress.get("embedded_chunks"),
+        "error_message": progress.get("error_message"),
+    }
+
+
+def _ingestion_run_payload(run, version, embedding_run=None) -> dict:
     silver_complete = run.status in {"silver_completed", "gold_completed", "indexed"}
     gold_complete = run.status in {"gold_completed", "indexed"}
     return {
@@ -451,7 +504,18 @@ def _ingestion_run_payload(run, version) -> dict:
             "gold": bool(version.gold_path) or gold_complete,
             "qdrant": run.status == "indexed",
         },
+        "embedding_progress": _embedding_progress_payload(embedding_run),
     }
+
+
+async def _get_embedding_progress_run(db: AsyncSession, run):
+    if not getattr(run, "project_id", None) or not getattr(run, "document_version_id", None):
+        return None
+    return await embedding_repository.get_latest_embedding_run(
+        db,
+        project_id=run.project_id,
+        document_version_id=run.document_version_id,
+    )
 
 
 async def _reconcile_stale_dispatch_run(db: AsyncSession, run):
@@ -587,7 +651,8 @@ async def get_ingestion_run_status(
     if version is None:
         raise HTTPException(500, "Ingestion run has no document version")
 
-    return _ingestion_run_payload(run, version)
+    embedding_run = await _get_embedding_progress_run(db, run)
+    return _ingestion_run_payload(run, version, embedding_run)
 
 
 @router.get("/runs", response_model=list[IngestionRunResponse])
@@ -609,7 +674,8 @@ async def list_ingestion_runs(
         run = await _reconcile_stale_dispatch_run(db, run)
         version = await version_repository.get_document_version(db, run.document_version_id)
         if version is not None:
-            payloads.append(_ingestion_run_payload(run, version))
+            embedding_run = await _get_embedding_progress_run(db, run)
+            payloads.append(_ingestion_run_payload(run, version, embedding_run))
     return payloads
 
 
@@ -636,6 +702,22 @@ async def retry_ingestion_run(
     version = await version_repository.get_document_version(db, run.document_version_id)
     if version is None:
         raise HTTPException(500, "Ingestion run has no document version")
+    if version.embedding_model:
+        await embedding_repository.upsert_embedding_progress(
+            db,
+            project_id=run.project_id,
+            document_version_id=run.document_version_id,
+            embedding_model=version.embedding_model,
+            status="queued",
+            total_chunks=0,
+            embedded_chunks=0,
+            total_batches=0,
+            embedded_batches=0,
+            attempt=1,
+            error_code=None,
+            error_message=None,
+        )
+        await db.commit()
 
     await publish_ingestion_event(
         run.id,
@@ -644,7 +726,8 @@ async def retry_ingestion_run(
     )
     if ingestion_orchestration_enabled():
         background_tasks.add_task(enqueue_ingestion, run.id)
-    return _ingestion_run_payload(run, version)
+    embedding_run = await _get_embedding_progress_run(db, run)
+    return _ingestion_run_payload(run, version, embedding_run)
 
 
 @router.get("/runs/{ingestion_run_id}/events")
@@ -668,7 +751,8 @@ async def stream_ingestion_run_events(
     if version is None:
         raise HTTPException(500, "Ingestion run has no document version")
 
-    initial_payload = _ingestion_run_payload(run, version)
+    embedding_run = await _get_embedding_progress_run(db, run)
+    initial_payload = _ingestion_run_payload(run, version, embedding_run)
     initial = durable_ingestion_event(
         ingestion_run_id,
         run.status,
@@ -683,6 +767,9 @@ async def stream_ingestion_run_events(
 
         last_status_rank = INGESTION_SEQUENCE.get(initial.data["status"], 0)
         last_event_sequence = initial.sequence
+        last_embedding_progress = _embedding_progress_checkpoint(
+            initial_payload.get("embedding_progress")
+        )
         seen_event_ids = {initial.id}
         cursor = last_event_id or "0-0"
         last_heartbeat = time.monotonic()
@@ -699,10 +786,14 @@ async def stream_ingestion_run_events(
                 seen_event_ids.add(event.id)
                 event_status = event.data.get("status")
                 event_status_rank = INGESTION_SEQUENCE.get(event_status, 0)
-                if event_status_rank <= last_status_rank or event.sequence <= last_event_sequence:
+                if event.sequence <= last_event_sequence or event_status_rank < last_status_rank:
                     continue
                 last_status_rank = event_status_rank
                 last_event_sequence = event.sequence
+                if "embedding_progress" in event.data:
+                    last_embedding_progress = _embedding_progress_checkpoint(
+                        event.data.get("embedding_progress")
+                    )
                 yield format_sse(event)
                 if event_status in TERMINAL_INGESTION_STATUSES:
                     return
@@ -720,7 +811,15 @@ async def stream_ingestion_run_events(
                     return
                 durable_rank = INGESTION_SEQUENCE.get(current.status, 0)
                 if durable_rank > last_status_rank:
-                    current_payload = _ingestion_run_payload(current, current_version)
+                    current_embedding_run = await _get_embedding_progress_run(stream_db, current)
+                    current_payload = _ingestion_run_payload(
+                        current,
+                        current_version,
+                        current_embedding_run,
+                    )
+                    last_embedding_progress = _embedding_progress_checkpoint(
+                        current_payload.get("embedding_progress")
+                    )
                     durable_event = durable_ingestion_event(
                         ingestion_run_id,
                         current.status,
@@ -739,6 +838,33 @@ async def stream_ingestion_run_events(
                     yield format_sse(event)
                     if current.status in TERMINAL_INGESTION_STATUSES:
                         return
+                elif durable_rank == last_status_rank:
+                    current_embedding_run = await _get_embedding_progress_run(stream_db, current)
+                    current_payload = _ingestion_run_payload(
+                        current,
+                        current_version,
+                        current_embedding_run,
+                    )
+                    current_embedding_progress = _embedding_progress_checkpoint(
+                        current_payload.get("embedding_progress")
+                    )
+                    if current_embedding_progress != last_embedding_progress:
+                        durable_event = durable_ingestion_event(
+                            ingestion_run_id,
+                            current.status,
+                            data=current_payload,
+                        )
+                        next_sequence = max(durable_event.sequence, last_event_sequence + 1)
+                        event = StreamEvent(
+                            id=f"durable-{next_sequence}-{current.status}",
+                            event=durable_event.event,
+                            sequence=next_sequence,
+                            timestamp=durable_event.timestamp,
+                            data=durable_event.data,
+                        )
+                        last_event_sequence = event.sequence
+                        last_embedding_progress = current_embedding_progress
+                        yield format_sse(event)
 
             now = time.monotonic()
             if now - last_heartbeat >= settings.SSE_HEARTBEAT_SECONDS:
