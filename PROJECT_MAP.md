@@ -648,12 +648,12 @@ Optional provider settings:
 | `backend/tests/unit/chunking/test_chunkers_api.py` | `/chunkers` and invalid chunker API tests when FastAPI is installed |
 | `backend/tests/unit/models/test_auth_validation.py` | Registration/profile validation and organization-reference checks |
 | `backend/tests/unit/api/test_frontend_control_plane_api.py` | Frontend-facing organization, project, and document API behavior |
-| `backend/tests/unit/embeddings/test_embedding_backends.py` | FastEmbed selection and deterministic offline embedding behavior |
+| `backend/tests/unit/embeddings/test_embedding_backends.py` | FastEmbed selection/cache reuse and deterministic offline embedding behavior |
 | `backend/tests/unit/models/test_control_plane_models.py` | Tasks 4–11 table, foreign-key, status, uniqueness, and composite-index tests |
 | `backend/tests/integration/postgres/test_control_plane_database.py` | Tasks 21–22 isolated PostgreSQL seed, constraint, relationship, lifecycle, schema, and migration tests |
 | `backend/tests/integration/postgres/test_control_plane_runtime.py` | Repository transitions, retry/recovery, seeding, and schema-validation behavior |
 | `backend/tests/integration/streaming/test_realtime_streaming.py` | Task 23 SSE, replay, fallback, ownership, token, disconnect, heartbeat, and optional live Redis tests |
-| `backend/tests/unit/ingestion/test_pipeline_artifacts.py` | Task 25 deterministic Silver/Gold Parquet, retry, empty input, and embedding mismatch tests |
+| `backend/tests/unit/ingestion/test_pipeline_artifacts.py` | Task 25 deterministic Silver/Gold Parquet, retry, empty input, embedding progress, timeout, and dimension mismatch tests |
 | `backend/tests/unit/ingestion/test_bronze_storage.py` | Bronze MinIO bucket validation, bounded upload boundary, and idempotent object-key behavior |
 | `backend/tests/unit/ingestion/test_ingestion_planner.py` | Adaptive technique classification, profiles, resource classes, batch sizes, and concurrency hints |
 | `backend/tests/unit/ingestion/test_ingestion_execution.py` | Profile-specific command selection, generic fallback, and worker environment propagation |
