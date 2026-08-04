@@ -460,6 +460,7 @@ services:
       - ./backend:/opt/ragforge/backend
       - ./backend/jobs:/opt/ragforge/jobs
       - spark_data:/tmp/spark
+      - embedding_model_cache:/models
     mem_limit: 3g
 
 volumes:
@@ -467,5 +468,6 @@ volumes:
   qdrant_data:
   minio_data:
   redis_data:
+  embedding_model_cache:
   airflow_postgres_data:
   spark_data:
