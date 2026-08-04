@@ -29,7 +29,9 @@ INGESTION_RUN_STATUSES = frozenset(
 EMBEDDING_RUN_STATUSES = frozenset(
     {
         "queued",
+        "loading_model",
         "running",
+        "retrying",
         "completed",
         "failed",
         "cancelled",
