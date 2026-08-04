@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import get_db
 from app.models import Document, DocumentVersion, Project
+from app.repositories import embedding_runs as embedding_repository
 from app.repositories import ingestion_runs as ingestion_repository
 from app.services.chunk_indexing import GoldChunk, index_document_version_chunks
 from app.services.event_stream import publish_ingestion_event
@@ -56,6 +58,62 @@ class IndexChunksPayload(BaseModel):
     chunks: list[GoldChunkPayload]
 
 
+class EmbeddingProgressUpdate(BaseModel):
+    stage: Literal["queued", "loading_model", "running", "retrying", "completed", "failed"]
+    embedding_model: str
+    embedding_batch_size: int | None = None
+    total_chunks: int = 0
+    embedded_chunks: int = 0
+    total_batches: int | None = None
+    embedded_batches: int | None = None
+    elapsed_ms: int | None = None
+    last_heartbeat_at: str | None = None
+    embedding_backend: str | None = None
+    embedding_device: str | None = None
+    embedding_dimension: int | None = None
+    model_load_elapsed_ms: int | None = None
+    attempt: int | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+def _embedding_status(stage: str) -> str:
+    return stage
+
+
+def _embedding_progress_payload(run, payload: EmbeddingProgressUpdate) -> dict[str, Any]:
+    return {
+        "stage": payload.stage,
+        "embedding_model": payload.embedding_model,
+        "embedding_batch_size": payload.embedding_batch_size,
+        "total_chunks": payload.total_chunks,
+        "embedded_chunks": payload.embedded_chunks,
+        "total_batches": payload.total_batches,
+        "embedded_batches": payload.embedded_batches,
+        "elapsed_ms": payload.elapsed_ms,
+        "last_heartbeat_at": payload.last_heartbeat_at,
+        "embedding_backend": payload.embedding_backend,
+        "embedding_device": payload.embedding_device,
+        "embedding_dimension": payload.embedding_dimension,
+        "model_load_elapsed_ms": payload.model_load_elapsed_ms,
+        "attempt": payload.attempt,
+        "error_code": payload.error_code,
+        "error_message": payload.error_message,
+        "document_id": run.document_id,
+        "document_version_id": run.document_version_id,
+    }
+
+
+def _parse_heartbeat(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
 def _run_payload(run, *, project=None, document=None, version=None) -> dict:
     payload = {
         "ingestion_run_id": run.id,
@@ -98,6 +156,7 @@ def _run_payload(run, *, project=None, document=None, version=None) -> dict:
                 "parser_name": version.parser_name,
                 "chunker_id": version.chunker_id,
                 "embedding_model": version.embedding_model,
+                "embedding_dimension": settings.EMBEDDING_DIMENSION,
                 "ingestion_plan": ingestion_plan.as_dict(),
             }
         )
@@ -153,6 +212,60 @@ async def update_ingestion_run(
         },
     )
     return _run_payload(run)
+
+
+@router.patch(
+    "/ingestion-runs/{ingestion_run_id}/embedding-progress",
+    dependencies=[Depends(require_pipeline_token)],
+)
+async def update_ingestion_run_embedding_progress(
+    ingestion_run_id: str,
+    payload: EmbeddingProgressUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    run = await ingestion_repository.get_ingestion_run(db, ingestion_run_id)
+    if run is None:
+        raise HTTPException(404, "Ingestion run not found")
+    if run.status not in {"running", "silver_completed", "gold_completed", "indexed"}:
+        raise HTTPException(409, f"Embedding progress cannot be recorded from status {run.status!r}")
+
+    project = await db.get(Project, run.project_id)
+    version = await db.get(DocumentVersion, run.document_version_id)
+    if project is None or version is None:
+        raise HTTPException(409, "Ingestion run lineage is incomplete")
+
+    embedding_run = await embedding_repository.upsert_embedding_progress(
+        db,
+        project_id=run.project_id,
+        document_version_id=run.document_version_id,
+        embedding_model=payload.embedding_model,
+        status=_embedding_status(payload.stage),
+        total_chunks=payload.total_chunks,
+        embedded_chunks=payload.embedded_chunks,
+        total_batches=payload.total_batches,
+        embedded_batches=payload.embedded_batches,
+        batch_size=payload.embedding_batch_size,
+        embedding_backend=payload.embedding_backend,
+        embedding_device=payload.embedding_device,
+        embedding_dimension=payload.embedding_dimension,
+        attempt=payload.attempt,
+        last_heartbeat_at=_parse_heartbeat(payload.last_heartbeat_at),
+        error_code=payload.error_code,
+        error_message=payload.error_message,
+    )
+    await db.commit()
+    progress = _embedding_progress_payload(run, payload)
+    await publish_ingestion_event(
+        run.id,
+        "running",
+        data={
+            "document_id": run.document_id,
+            "document_version_id": run.document_version_id,
+            "embedding_run_id": embedding_run.id,
+            "embedding_progress": progress,
+        },
+    )
+    return {"embedding_run_id": embedding_run.id, "embedding_progress": progress}
 
 
 @router.post(
