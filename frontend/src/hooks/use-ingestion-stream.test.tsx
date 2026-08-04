@@ -44,6 +44,23 @@ function terminalStream() {
   );
 }
 
+function embeddingProgressStream() {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'id: 1-1\nevent: ingestion.running\ndata: {"event":"ingestion.running","status":"running","embedding_progress":{"stage":"running","embedding_model":"BAAI/bge-small-en-v1.5","total_chunks":74,"embedded_chunks":18,"total_batches":10,"embedded_batches":3,"embedding_backend":"fastembed","embedding_device":"cpu","embedding_dimension":384}}\n\n',
+          ),
+        );
+        controller.close();
+      },
+    }),
+    {status: 200, headers: {"Content-Type": "text/event-stream"}},
+  );
+}
+
 describe("useIngestionStream", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -76,5 +93,18 @@ describe("useIngestionStream", () => {
     });
     expect(apiFetch).toHaveBeenCalledWith("/ingest/runs/run-1");
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("applies backend embedding progress from the stream", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(embeddingProgressStream());
+
+    const {result} = renderHook(() => useIngestionStream(initialRun));
+
+    await waitFor(() =>
+      expect(result.current.run.embedding_progress?.embedded_chunks).toBe(18),
+    );
+    expect(result.current.run.embedding_progress?.stage).toBe("running");
+    expect(result.current.run.embedding_progress?.embedded_batches).toBe(3);
+    expect(result.current.run.embedding_progress?.embedding_device).toBe("cpu");
   });
 });
