@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 
 import httpx
 
@@ -16,7 +17,8 @@ async def enqueue_ingestion(ingestion_run_id: str) -> str | None:
     if not settings.AIRFLOW_API_URL:
         return None
 
-    dag_run_id = f"ragforge__{ingestion_run_id}"
+    attempt_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    dag_run_id = f"ragforge__{ingestion_run_id}__{attempt_id}"
     base_url = settings.AIRFLOW_API_URL.rstrip("/")
     token_url = f"{base_url}/auth/token"
     dag_run_url = (
