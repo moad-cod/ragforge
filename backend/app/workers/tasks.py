@@ -12,6 +12,7 @@ from app.core.db import AsyncSessionLocal
 from app.repositories.ingestion_runs import update_ingestion_status
 from app.workers.celery_app import celery_app
 from app.services.event_stream import publish_ingestion_event
+from jobs.control_plane import RAGForgeControlPlane
 from jobs.ingestion_workflow import (
     bronze_to_silver_stage,
     detect_ingestion_plan,
@@ -39,6 +40,23 @@ def _handle_stage_error(task, ingestion_run_id: str, exc: Exception):
         except Exception:
             logger.exception("Could not mark ingestion run %s as failed", ingestion_run_id)
         raise exc
+    if getattr(task, "name", "") == "ragforge.ingestion.silver_to_gold":
+        try:
+            client = RAGForgeControlPlane()
+            run = client.get_run(ingestion_run_id)
+            client.update_embedding_progress(
+                ingestion_run_id,
+                {
+                    "stage": "retrying",
+                    "embedding_model": run.get("embedding_model") or settings.EMBEDDING_MODEL,
+                    "total_chunks": 0,
+                    "embedded_chunks": 0,
+                    "attempt": task.request.retries + 2,
+                    "error_message": str(exc),
+                },
+            )
+        except Exception:
+            logger.exception("Could not mark embedding run %s as retrying", ingestion_run_id)
     raise task.retry(
         exc=exc,
         countdown=settings.CELERY_TASK_RETRY_DELAY_SECONDS,
@@ -51,6 +69,15 @@ def _task_options() -> dict[str, Any]:
         "max_retries": settings.CELERY_TASK_MAX_RETRIES,
         "default_retry_delay": settings.CELERY_TASK_RETRY_DELAY_SECONDS,
     }
+
+
+def _embedding_task_options() -> dict[str, Any]:
+    options = _task_options()
+    if settings.EMBEDDING_TIMEOUT_SECONDS > 0:
+        soft_limit = int(settings.EMBEDDING_TIMEOUT_SECONDS)
+        options["soft_time_limit"] = soft_limit
+        options["time_limit"] = soft_limit + 30
+    return options
 
 
 @celery_app.task(name="ragforge.ingestion.detect_plan", **_task_options())
@@ -70,7 +97,7 @@ def bronze_to_silver_task(self, ingestion: dict[str, Any]) -> dict[str, Any]:
         return _handle_stage_error(self, ingestion_run_id, exc)
 
 
-@celery_app.task(name="ragforge.ingestion.silver_to_gold", **_task_options())
+@celery_app.task(name="ragforge.ingestion.silver_to_gold", **_embedding_task_options())
 def silver_to_gold_task(self, ingestion: dict[str, Any]) -> dict[str, Any]:
     ingestion_run_id = _run_id_from_payload(ingestion)
     try:
