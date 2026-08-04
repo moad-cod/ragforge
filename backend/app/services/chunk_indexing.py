@@ -63,7 +63,6 @@ def _validate_chunks(chunks: Sequence[GoldChunk]) -> None:
         raise ValueError("At least one Gold chunk is required for indexing")
 
     indexes: set[int] = set()
-    hashes: set[str] = set()
     vector_size: int | None = None
     for chunk in chunks:
         if not chunk.text.strip():
@@ -71,11 +70,6 @@ def _validate_chunks(chunks: Sequence[GoldChunk]) -> None:
         if chunk.chunk_index in indexes:
             raise ValueError(f"Duplicate chunk_index {chunk.chunk_index}")
         indexes.add(chunk.chunk_index)
-
-        content_hash = _content_hash(chunk)
-        if content_hash in hashes:
-            raise ValueError(f"Duplicate content_hash for chunk {chunk.chunk_index}")
-        hashes.add(content_hash)
 
         if len(chunk.dense_vector) == 0:
             raise ValueError(f"Chunk {chunk.chunk_index} has no dense vector")
