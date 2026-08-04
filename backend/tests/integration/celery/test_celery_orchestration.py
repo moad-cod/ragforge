@@ -187,6 +187,29 @@ class CeleryIngestionTests(unittest.IsolatedAsyncioTestCase):
         build_workflow.assert_not_called()
 
 
+class CeleryEmbeddingRetryTests(unittest.TestCase):
+    def test_silver_to_gold_retry_marks_embedding_progress_retrying(self):
+        from app.workers import tasks as celery_tasks
+
+        client = Mock()
+        client.get_run.return_value = {"embedding_model": "BAAI/bge-small-en-v1.5"}
+        task = SimpleNamespace(
+            name="ragforge.ingestion.silver_to_gold",
+            max_retries=2,
+            request=SimpleNamespace(retries=0),
+            retry=Mock(side_effect=RuntimeError("retry scheduled")),
+        )
+
+        with patch.object(celery_tasks, "RAGForgeControlPlane", return_value=client):
+            with self.assertRaisesRegex(RuntimeError, "retry scheduled"):
+                celery_tasks._handle_stage_error(task, "run-id", RuntimeError("temporary"))
+
+        client.update_embedding_progress.assert_called_once()
+        progress = client.update_embedding_progress.call_args.args[1]
+        self.assertEqual(progress["stage"], "retrying")
+        self.assertEqual(progress["attempt"], 2)
+
+
 class SharedIngestionWorkflowTests(unittest.TestCase):
     def test_detect_plan_marks_run_running(self):
         from jobs import ingestion_workflow
@@ -235,7 +258,7 @@ class SharedIngestionWorkflowTests(unittest.TestCase):
                 ingestion_workflow,
                 "silver_to_gold",
                 return_value={"artifact_path": "gold/path.parquet"},
-            ),
+            ) as silver_to_gold_mock,
             patch.object(
                 ingestion_workflow,
                 "gold_chunks",
@@ -258,6 +281,10 @@ class SharedIngestionWorkflowTests(unittest.TestCase):
             gold_path="gold/path.parquet",
         )
         client.index_chunks.assert_called_once()
+        silver_to_gold_mock.call_args.kwargs["progress_callback"](
+            {"stage": "running", "embedding_model": "model", "total_chunks": 1, "embedded_chunks": 1}
+        )
+        client.update_embedding_progress.assert_called_once()
         client.update_status.assert_any_call("run-id", "indexed")
 
 

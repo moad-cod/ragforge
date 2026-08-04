@@ -74,7 +74,8 @@ class AirflowServiceTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await enqueue_ingestion("run-id")
 
-        self.assertEqual(result, "ragforge__run-id")
+        self.assertIsNotNone(result)
+        self.assertTrue(result.startswith("ragforge__run-id__"))
         self.assertEqual(calls[0][0], "http://airflow-apiserver:8080/auth/token")
         self.assertEqual(
             calls[0][1]["json"],
@@ -85,6 +86,7 @@ class AirflowServiceTests(unittest.IsolatedAsyncioTestCase):
             "http://airflow-apiserver:8080/api/v2/dags/ragforge_ingestion/dagRuns",
         )
         self.assertEqual(calls[1][1]["headers"], {"Authorization": "Bearer airflow-jwt"})
+        self.assertEqual(calls[1][1]["json"]["dag_run_id"], result)
         self.assertEqual(calls[1][1]["json"]["conf"], {"ingestion_run_id": "run-id"})
         self.assertIsNone(calls[1][1]["json"]["logical_date"])
         self.assertEqual(update_status.await_args.args[1], "run-id")
@@ -93,7 +95,7 @@ class AirflowServiceTests(unittest.IsolatedAsyncioTestCase):
         publish_event.assert_awaited_once_with(
             "run-id",
             "queued",
-            data={"airflow_dag_run_id": "ragforge__run-id"},
+            data={"airflow_dag_run_id": result},
         )
 
 
