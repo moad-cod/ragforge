@@ -6,7 +6,9 @@ import hashlib
 import io
 import json
 import os
+import time
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 import boto3
@@ -16,6 +18,7 @@ from botocore.config import Config
 SILVER_FILENAME = "chunks.parquet"
 GOLD_FILENAME = "embedded_chunks.parquet"
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+EmbeddingProgressCallback = Callable[[dict[str, Any]], None]
 
 
 def _split_object_path(path: str) -> tuple[str, str]:
@@ -125,6 +128,110 @@ def _read_parquet(data: bytes) -> list[dict[str, Any]]:
     return pq.read_table(io.BytesIO(data)).to_pylist()
 
 
+def _utc_timestamp() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _positive_int(value: Any, field_name: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
+    if parsed <= 0:
+        raise ValueError(f"{field_name} must be positive")
+    return parsed
+
+
+def _embedding_batch_size(run: dict[str, Any], chunk_count: int) -> int:
+    plan = run.get("ingestion_plan") or {}
+    if "embedding_batch_size" in plan:
+        configured = plan.get("embedding_batch_size")
+    else:
+        configured = (
+            os.environ.get("RAGFORGE_EMBEDDING_BATCH_SIZE")
+            or os.environ.get("EMBEDDING_BATCH_SIZE")
+        )
+    if configured is None:
+        return chunk_count
+    return _positive_int(configured, "ingestion_plan.embedding_batch_size")
+
+
+def _embedding_timeout_seconds() -> float | None:
+    configured = (
+        os.environ.get("RAGFORGE_EMBEDDING_TIMEOUT_SECONDS")
+        or os.environ.get("EMBEDDING_TIMEOUT_SECONDS")
+    )
+    if configured is None or configured == "":
+        return None
+    try:
+        timeout = float(configured)
+    except ValueError as exc:
+        raise ValueError("EMBEDDING_TIMEOUT_SECONDS must be numeric") from exc
+    return timeout if timeout > 0 else None
+
+
+def _emit_embedding_progress(
+    callback: EmbeddingProgressCallback | None,
+    *,
+    stage: str,
+    total_chunks: int,
+    embedded_chunks: int,
+    total_batches: int,
+    embedded_batches: int,
+    embedding_model: str,
+    batch_size: int,
+    started_at: float,
+    error_message: str | None = None,
+    model_info: dict[str, Any] | None = None,
+) -> None:
+    if callback is None:
+        return
+    payload = {
+        "stage": stage,
+        "embedding_model": embedding_model,
+        "embedding_batch_size": batch_size,
+        "total_chunks": total_chunks,
+        "embedded_chunks": embedded_chunks,
+        "total_batches": total_batches,
+        "embedded_batches": embedded_batches,
+        "elapsed_ms": int((time.monotonic() - started_at) * 1000),
+        "last_heartbeat_at": _utc_timestamp(),
+        "error_message": error_message,
+    }
+    if model_info:
+        payload.update(
+            {
+                "embedding_backend": model_info.get("backend"),
+                "embedding_device": model_info.get("device"),
+                "embedding_dimension": model_info.get("dimension"),
+                "model_load_elapsed_ms": model_info.get("load_elapsed_ms"),
+            }
+        )
+    callback(payload)
+
+
+def _validate_embedding_dimensions(
+    embeddings: Sequence[Sequence[float]],
+    *,
+    expected_dimension: int | None,
+    embedding_model: str,
+) -> None:
+    vector_size: int | None = None
+    for index, vector in enumerate(embeddings):
+        if not vector:
+            raise ValueError(f"Embedding vector {index} is empty")
+        if vector_size is None:
+            vector_size = len(vector)
+        elif len(vector) != vector_size:
+            raise ValueError("Embedding model returned vectors with inconsistent dimensions")
+        if expected_dimension and len(vector) != expected_dimension:
+            raise ValueError(
+                "Embedding vector dimension mismatch before Qdrant indexing: "
+                f"model {embedding_model!r} returned {len(vector)} dimensions, "
+                f"expected {expected_dimension}"
+            )
+
+
 def build_silver_rows(
     raw_bytes: bytes,
     *,
@@ -220,6 +327,7 @@ def silver_to_gold(
     *,
     store: ArtifactStore | None = None,
     embedder: Callable[[list[str]], list[list[float]]] | None = None,
+    progress_callback: EmbeddingProgressCallback | None = None,
 ) -> dict[str, Any]:
     store = store or ArtifactStore()
     silver_path = run.get("silver_path")
@@ -228,13 +336,11 @@ def silver_to_gold(
     rows = _read_parquet(store.read_bytes(silver_path))
     if not rows:
         raise ValueError("Silver artifact contains no chunks")
-    if embedder is None:
-        embedding_model = run.get("embedding_model") or DEFAULT_EMBEDDING_MODEL
-        if embedding_model != DEFAULT_EMBEDDING_MODEL:
-            raise ValueError(f"Unsupported pipeline embedding model {embedding_model!r}")
-        from app.services.embedder import embed_texts
-
-        embedder = embed_texts
+    started_at = time.monotonic()
+    embedding_model = run.get("embedding_model") or os.environ.get("EMBEDDING_MODEL") or DEFAULT_EMBEDDING_MODEL
+    batch_size = _embedding_batch_size(run, len(rows))
+    total_batches = (len(rows) + batch_size - 1) // batch_size
+    model_info: dict[str, Any] | None = None
     precomputed = [row.get("precomputed_dense_vector") for row in rows]
     reused_precomputed_embeddings = any(vector is not None for vector in precomputed)
     embedding_batches = 0
@@ -243,25 +349,80 @@ def silver_to_gold(
             raise ValueError("Silver artifact contains incomplete precomputed embeddings")
         embeddings = [list(vector) for vector in precomputed]
     else:
-        plan = run.get("ingestion_plan") or {}
-        configured_batch_size = plan.get("embedding_batch_size")
-        if configured_batch_size is None:
-            batch_size = len(rows)
-        else:
-            try:
-                batch_size = int(configured_batch_size)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("ingestion_plan.embedding_batch_size must be an integer") from exc
-            if batch_size <= 0:
-                raise ValueError("ingestion_plan.embedding_batch_size must be positive")
+        if embedder is None:
+            if embedding_model != DEFAULT_EMBEDDING_MODEL:
+                raise ValueError(f"Unsupported pipeline embedding model {embedding_model!r}")
+            from app.services.embedder import embed_texts, ensure_embedding_model_ready
 
+            _emit_embedding_progress(
+                progress_callback,
+                stage="loading_model",
+                total_chunks=len(rows),
+                embedded_chunks=0,
+                total_batches=total_batches,
+                embedded_batches=0,
+                embedding_model=embedding_model,
+                batch_size=batch_size,
+                started_at=started_at,
+            )
+            model_info = ensure_embedding_model_ready(embedding_model).as_dict()
+
+            def default_embedder(texts: list[str]) -> list[list[float]]:
+                return embed_texts(texts, model_name=embedding_model)
+
+            embedder = default_embedder
+        timeout_seconds = _embedding_timeout_seconds()
+        deadline = started_at + timeout_seconds if timeout_seconds is not None else None
         embeddings: list[list[float]] = []
         texts = [row["text"] for row in rows]
+        _emit_embedding_progress(
+            progress_callback,
+            stage="running",
+            total_chunks=len(rows),
+            embedded_chunks=0,
+            total_batches=total_batches,
+            embedded_batches=0,
+            embedding_model=embedding_model,
+            batch_size=batch_size,
+            started_at=started_at,
+            model_info=model_info,
+        )
         for start in range(0, len(texts), batch_size):
-            embeddings.extend(embedder(texts[start:start + batch_size]))
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Embedding stage timed out after {timeout_seconds:g} seconds "
+                    f"with {len(embeddings)}/{len(texts)} chunks embedded"
+                )
+            batch = embedder(texts[start:start + batch_size])
+            embeddings.extend(batch)
             embedding_batches += 1
+            _emit_embedding_progress(
+                progress_callback,
+                stage="running",
+                total_chunks=len(rows),
+                embedded_chunks=len(embeddings),
+                total_batches=total_batches,
+                embedded_batches=embedding_batches,
+                embedding_model=embedding_model,
+                batch_size=batch_size,
+                started_at=started_at,
+                model_info=model_info,
+            )
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Embedding stage timed out after {timeout_seconds:g} seconds "
+                    f"with {len(embeddings)}/{len(texts)} chunks embedded"
+                )
     if len(embeddings) != len(rows):
         raise ValueError("Embedding model returned an unexpected number of vectors")
+    expected_dimension = run.get("embedding_dimension")
+    if expected_dimension is not None:
+        expected_dimension = _positive_int(expected_dimension, "embedding_dimension")
+    _validate_embedding_dimensions(
+        embeddings,
+        expected_dimension=expected_dimension,
+        embedding_model=embedding_model,
+    )
     gold_rows = []
     for row, vector in zip(rows, embeddings):
         gold_row = {
@@ -283,6 +444,18 @@ def silver_to_gold(
         gold_path,
         _write_parquet(gold_rows, _gold_schema()),
         "application/vnd.apache.parquet",
+    )
+    _emit_embedding_progress(
+        progress_callback,
+        stage="completed",
+        total_chunks=len(gold_rows),
+        embedded_chunks=len(gold_rows),
+        total_batches=total_batches,
+        embedded_batches=embedding_batches,
+        embedding_model=embedding_model,
+        batch_size=batch_size,
+        started_at=started_at,
+        model_info=model_info,
     )
     return {
         "artifact_path": gold_path,
