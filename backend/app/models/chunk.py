@@ -39,7 +39,6 @@ class Chunk(Base):
 
     __table_args__ = (
         UniqueConstraint("document_version_id", "chunk_index", name="uq_chunks_version_chunk_index"),
-        UniqueConstraint("document_version_id", "content_hash", name="uq_chunks_version_content_hash"),
         Index("ix_chunks_project_id", "project_id"),
         Index("ix_chunks_document_id", "document_id"),
         Index("ix_chunks_document_version_id", "document_version_id"),

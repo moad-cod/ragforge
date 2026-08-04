@@ -55,7 +55,6 @@ REQUIRED_UNIQUE_CONSTRAINTS = frozenset(
         ("document_versions", "uq_document_versions_document_content_hash"),
         ("chunks", "uq_chunks_qdrant_point_id"),
         ("chunks", "uq_chunks_version_chunk_index"),
-        ("chunks", "uq_chunks_version_content_hash"),
         ("embedding_runs", "uq_embedding_runs_version_model"),
     }
 )
