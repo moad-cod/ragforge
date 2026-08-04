@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -137,6 +139,31 @@ class PipelineArtifactTests(unittest.TestCase):
         self.assertEqual(gold["chunks"], 5)
         self.assertEqual(batch_sizes, [2, 2, 1])
 
+    def test_gold_embedding_reports_actual_batch_progress(self):
+        silver = bronze_to_silver(
+            self.run,
+            store=self.store,
+            parser=lambda _data, _filename: ["source"],
+            chunker_loader=lambda _chunker_id: (
+                lambda _text: [f"chunk {index}" for index in range(5)]
+            ),
+        )
+        self.run["silver_path"] = silver["artifact_path"]
+        self.run["ingestion_plan"] = {"embedding_batch_size": 2}
+        events = []
+
+        gold = silver_to_gold(
+            self.run,
+            store=self.store,
+            embedder=lambda texts: [[float(len(text)), 0.5] for text in texts],
+            progress_callback=events.append,
+        )
+
+        self.assertEqual(gold["chunks"], 5)
+        self.assertEqual([event["stage"] for event in events], ["running", "running", "running", "running", "completed"])
+        self.assertEqual([event["embedded_chunks"] for event in events], [0, 2, 4, 5, 5])
+        self.assertEqual(events[-1]["total_batches"], 3)
+
     def test_invalid_plan_batch_size_fails_cleanly(self):
         silver = bronze_to_silver(
             self.run,
@@ -149,6 +176,50 @@ class PipelineArtifactTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "must be positive"):
             silver_to_gold(self.run, store=self.store, embedder=lambda _texts: [])
+
+    def test_embedding_timeout_fails_without_writing_gold(self):
+        silver = bronze_to_silver(
+            self.run,
+            store=self.store,
+            parser=lambda _data, _filename: ["source"],
+            chunker_loader=lambda _chunker_id: lambda _text: ["slow chunk"],
+        )
+        self.run["silver_path"] = silver["artifact_path"]
+
+        def slow_embed(texts):
+            time.sleep(0.01)
+            return [[1.0, 0.5] for _text in texts]
+
+        with patch.dict(os.environ, {"EMBEDDING_TIMEOUT_SECONDS": "0.001"}):
+            with self.assertRaisesRegex(TimeoutError, "Embedding stage timed out"):
+                silver_to_gold(self.run, store=self.store, embedder=slow_embed)
+
+        self.assertNotIn(
+            "gold/org_id=o/project_id=p/document_id=d/version=1/embedded_chunks.parquet",
+            self.store.objects,
+        )
+
+    def test_embedding_dimension_mismatch_fails_before_qdrant(self):
+        silver = bronze_to_silver(
+            self.run,
+            store=self.store,
+            parser=lambda _data, _filename: ["source"],
+            chunker_loader=lambda _chunker_id: lambda _text: ["indexable chunk"],
+        )
+        self.run["silver_path"] = silver["artifact_path"]
+        self.run["embedding_dimension"] = 3
+
+        with self.assertRaisesRegex(ValueError, "dimension mismatch before Qdrant"):
+            silver_to_gold(
+                self.run,
+                store=self.store,
+                embedder=lambda _texts: [[1.0, 0.5]],
+            )
+
+        self.assertNotIn(
+            "gold/org_id=o/project_id=p/document_id=d/version=1/embedded_chunks.parquet",
+            self.store.objects,
+        )
 
     def test_late_chunking_reuses_contextual_embeddings_in_gold(self):
         self.run["chunker_id"] = "late_chunking"
