@@ -178,6 +178,41 @@ class QdrantChunkLineageTests(unittest.IsolatedAsyncioTestCase):
             )
         client.upsert.assert_not_called()
 
+    async def test_duplicate_content_hashes_are_indexed_with_distinct_lineage(self):
+        chunks = [
+            GoldChunk(chunk_index=0, text="Repeated footer", dense_vector=[0.1, 0.2]),
+            GoldChunk(chunk_index=1, text="Repeated footer", dense_vector=[0.3, 0.4]),
+        ]
+        client = Mock()
+        client.get_collections.return_value = SimpleNamespace(collections=[])
+        stored_rows = [SimpleNamespace(id="stored-0"), SimpleNamespace(id="stored-1")]
+
+        with patch(
+            "app.services.chunk_indexing.replace_chunks_for_document_version",
+            AsyncMock(return_value=stored_rows),
+        ) as replace_chunks:
+            result = await index_document_version_chunks(
+                SimpleNamespace(),
+                project=self.project,
+                document=self.document,
+                version=self.version,
+                ingestion_run=self.run,
+                chunks=chunks,
+                client=client,
+                sparse_embedder=lambda texts: [
+                    SparseVector(indices=[index], values=[1.0])
+                    for index, _text in enumerate(texts)
+                ],
+            )
+
+        self.assertIs(result, stored_rows)
+        points = client.upsert.call_args.kwargs["points"]
+        self.assertEqual(points[0].id, qdrant_point_id(self.version.id, 0))
+        self.assertEqual(points[1].id, qdrant_point_id(self.version.id, 1))
+        rows = replace_chunks.await_args.args[2]
+        self.assertEqual(rows[0]["content_hash"], rows[1]["content_hash"])
+        self.assertNotEqual(rows[0]["qdrant_point_id"], rows[1]["qdrant_point_id"])
+
 
 if __name__ == "__main__":
     unittest.main()
