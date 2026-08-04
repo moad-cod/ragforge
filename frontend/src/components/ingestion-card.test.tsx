@@ -20,6 +20,7 @@ const failedRun: IngestionRun = {
     gold: false,
     qdrant: false,
   },
+  embedding_progress: null,
 };
 
 const document: Document = {

@@ -24,6 +24,7 @@ const initialRun: IngestionRun = {
     gold: false,
     qdrant: false,
   },
+  embedding_progress: null,
 };
 
 function terminalStream() {
