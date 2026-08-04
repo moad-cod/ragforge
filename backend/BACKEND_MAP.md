@@ -295,7 +295,7 @@ For durable file ingestion, chunk and point identities are UUIDv5 values derived
 - a separate deterministic Qdrant point ID
 - a readable lineage ID in the Qdrant payload
 
-Indexing validates non-empty text, unique indexes, unique content hashes, and a consistent vector size. It computes sparse BM25 vectors, deletes existing Qdrant points for the version, upserts dense+sparse points, then replaces that version's PostgreSQL chunk rows. Because IDs are deterministic, retrying the same version is safe.
+Indexing validates non-empty text, unique chunk indexes, and a consistent vector size. It computes sparse BM25 vectors, deletes existing Qdrant points for the version, upserts dense+sparse points, then replaces that version's PostgreSQL chunk rows. Because IDs are deterministic, retrying the same version is safe. Duplicate chunk content hashes are allowed because repeated text can be valid document content.
 
 Qdrant is written before the SQL rows. A SQL failure can therefore leave Qdrant ahead temporarily, but retrying repairs the mismatch.
 
@@ -430,11 +430,11 @@ erDiagram
 | `DocumentVersion` / `document_versions` | Immutable content identity and version number plus artifact, parser, chunker, model, status, and error metadata. |
 | `IngestionRun` / `ingestion_runs` | One pipeline attempt for a specific document version, including timestamps and a legacy `airflow_dag_run_id` orchestration ID field used by both Airflow and Celery in the current branch. |
 | `Chunk` / `chunks` | Durable text and Qdrant lineage for batch-indexed Gold chunks. |
-| `EmbeddingRun` / `embedding_runs` | Embedding progress model and repository support; not currently created by the active API/orchestrator flow. |
+| `EmbeddingRun` / `embedding_runs` | Embedding progress model updated by the active file-ingestion Silver-to-Gold flow, including chunk/batch counters, backend/device/dimension metadata, attempt, heartbeat, and safe errors. |
 | `QueryLog` / `query_logs` | Durable question, answer, provider/model, latency, cache, route, and optional evaluation scores. |
 | `RetrievalLog` / `retrieval_logs` | Ranked retrieval evidence, scores, strategy, and optional link to a durable chunk. |
 
-Important uniqueness rules include user email, project collection, `(document, version_number)`, `(document, content_hash)`, `(version, chunk_index)`, `(version, chunk content_hash)`, Qdrant point ID, and `(version, embedding_model)`.
+Important uniqueness rules include user email, project collection, `(document, version_number)`, `(document, content_hash)`, `(version, chunk_index)`, Qdrant point ID, and `(version, embedding_model)`. Chunk content hashes are indexed but not unique.
 
 ### Lifecycle states
 
@@ -783,7 +783,7 @@ These are important implementation facts, not necessarily defects in every deplo
 6. **Orchestrator triggering is best-effort and has no inline fallback.** If the selected orchestrator is disabled, a file run remains `landed`; if background enqueue fails, it can also remain `landed`. Either case requires an external pipeline trigger or operational recovery.
 7. **Celery currently reuses `airflow_dag_run_id`.** The Celery workflow ID is persisted in the existing Airflow-named field to avoid schema churn during comparison.
 8. **Celery is implemented for benchmarking, but the infrastructure E2E suite is still Airflow-oriented.** Celery has focused unit coverage and benchmark validation; the older `tests/e2e/test_control_plane.py` still waits for Airflow success.
-9. **Embedding-run tracking is dormant.** The table and repository exist, but the active pipeline does not create/update `EmbeddingRun` records.
+9. **Embedding-run tracking is active for durable file ingestion.** The Silver-to-Gold stage updates `EmbeddingRun` records through the internal pipeline API; synchronous URL/GDrive/multimodal paths still do not create this lineage.
 10. **CrossEncoder reranking is optional.** It is referenced in code but intentionally absent from the base dependencies, so default installations preserve RRF order.
 11. **No startup dependency checks or CORS configuration exist in `app/main.py`.** `/health` only confirms that the FastAPI process can answer.
 12. **Qdrant/PostgreSQL updates are not one atomic transaction.** Deterministic indexing makes retry/rebuild the recovery mechanism.
