@@ -12,6 +12,13 @@ class Settings(BaseSettings):
     LLM_MAX_RETRIES: int = 2
     LLM_TIMEOUT_SECONDS: float = 60.0
     EMBEDDING_BACKEND: str = "fastembed"
+    EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
+    EMBEDDING_DIMENSION: int = 384
+    EMBEDDING_DEVICE: str = "auto"
+    EMBEDDING_BATCH_SIZE: int = 192
+    EMBEDDING_TIMEOUT_SECONDS: float = 900.0
+    EMBEDDING_ALLOW_MODEL_DOWNLOAD: bool = True
+    EMBEDDING_CACHE_DIR: str = "/models/fastembed"
 
     # Cloudflare R2 is needed only for multimodal PDF ingestion.
     R2_ACCOUNT_ID: str = ""
