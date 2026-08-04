@@ -420,11 +420,16 @@ uploaded | landed | processing | chunked | embedded | indexed | failed | deleted
 IngestionRun:
 landed -> queued -> running -> silver_completed -> gold_completed -> indexed
 any non-terminal stage -> failed | cancelled
+
+EmbeddingRun:
+queued -> loading_model -> running -> completed
+any non-terminal stage -> failed | cancelled
+retrying may be recorded between attempts when a worker reports a retry
 ```
 
 Only failed runs can be retried. Retry resets the run to `queued`, clears its timing/error/orchestration ID and Silver/Gold paths, and returns the document/version to `landed`. Public run reads reconcile stale `landed` or `queued` runs that exceeded `INGESTION_DISPATCH_TIMEOUT_SECONDS` by marking them `failed`, recording `finished_at`, and preserving the Bronze artifact for safe retry.
 
-The public run response exposes four coarse progress booleans (`bronze`, `silver`, `gold`, `qdrant`) plus run-level timestamps and error text. Redis/SSE maps the six forward statuses to ordered progress events and also emits terminal failure/cancellation events. PostgreSQL does not currently store nine separate pipeline-stage records.
+The public run response exposes four coarse progress booleans (`bronze`, `silver`, `gold`, `qdrant`) plus run-level timestamps, error text, and optional `embedding_progress` derived from `embedding_runs`. Embedding progress stores real chunk and batch counters, model/backend/device/dimension metadata, attempt number, heartbeat, and safe errors. Redis/SSE maps the six forward statuses to ordered progress events, allows same-status `running` embedding heartbeats, and also emits terminal failure/cancellation events. PostgreSQL does not currently store nine separate pipeline-stage records.
 The onboarding progress UI treats `progress.bronze` as the durable Bronze
 completion signal and shows `landed`/`queued` runs as waiting for parsing rather
 than as an active Bronze upload.
